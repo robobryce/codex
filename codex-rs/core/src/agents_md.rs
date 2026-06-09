@@ -142,19 +142,12 @@ async fn read_agents_md(
     }
 }
 
-/// Discover the list of AGENTS.md files using the same search rules as
-/// `read_agents_md`, but return the file paths instead of concatenated
-/// contents. The list is ordered from project root to the current working
-/// directory (inclusive). Symlinks are allowed. When `project_doc_max_bytes`
-/// is zero, returns an empty list.
+/// Discovers AGENTS.md files from the project root to the current working
+/// directory, inclusive. Symlinks are allowed.
 async fn agents_md_paths(
     config: &Config,
     fs: &dyn ExecutorFileSystem,
 ) -> io::Result<Vec<AbsolutePathBuf>> {
-    if config.project_doc_max_bytes == 0 {
-        return Ok(Vec::new());
-    }
-
     let dir = config.cwd.clone();
 
     let mut merged = TomlValue::Table(toml::map::Map::new());
@@ -314,27 +307,28 @@ impl LoadedAgentsMd {
     /// Returns the concatenated model-visible instruction text.
     pub fn text(&self) -> String {
         let mut output = String::new();
-        let mut previous_kind = None;
+        let mut has_previous = false;
+        let mut previous_was_project = false;
         if let Some(instructions) = &self.user_instructions {
             output.push_str(&instructions.text);
-            previous_kind = Some(InstructionKind::User);
+            has_previous = true;
         }
         for entry in &self.entries {
-            if let Some(previous_kind) = previous_kind {
+            let is_project = matches!(&entry.provenance, InstructionProvenance::Project(_));
+            if has_previous {
                 // The project-doc marker tells the model where workspace-scoped
                 // instructions begin, so it is only needed on the transition
                 // from user or internal instructions to project instructions.
-                let separator = match (previous_kind, entry.provenance.kind()) {
-                    (
-                        InstructionKind::User | InstructionKind::Internal,
-                        InstructionKind::Project,
-                    ) => AGENTS_MD_SEPARATOR,
-                    _ => "\n\n",
+                let separator = if is_project && !previous_was_project {
+                    AGENTS_MD_SEPARATOR
+                } else {
+                    "\n\n"
                 };
                 output.push_str(separator);
             }
             output.push_str(&entry.contents);
-            previous_kind = Some(entry.provenance.kind());
+            has_previous = true;
+            previous_was_project = is_project;
         }
         output
     }
@@ -377,26 +371,12 @@ enum InstructionProvenance {
 }
 
 impl InstructionProvenance {
-    fn kind(&self) -> InstructionKind {
-        match self {
-            Self::Project(_) => InstructionKind::Project,
-            Self::Internal => InstructionKind::Internal,
-        }
-    }
-
     fn path(&self) -> Option<&AbsolutePathBuf> {
         match self {
             Self::Project(path) => Some(path),
             Self::Internal => None,
         }
     }
-}
-
-#[derive(Clone, Copy)]
-enum InstructionKind {
-    User,
-    Project,
-    Internal,
 }
 
 fn warn_invalid_utf8(

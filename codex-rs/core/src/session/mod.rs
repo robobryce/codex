@@ -516,19 +516,18 @@ impl Codex {
             instructions: user_instructions,
             warnings: mut user_instruction_warnings,
         } = user_instructions;
+        // TODO(anp) assemble instructions from multiple environments
         let primary_environment = environment_selections.primary_environment();
         let primary_fs = primary_environment
             .as_ref()
             .map(|environment| environment.get_filesystem());
-        let mut agents_md_warnings = Vec::new();
         let loaded_agents_md = load_project_instructions(
             &config,
             user_instructions,
             primary_fs.as_deref(),
-            &mut agents_md_warnings,
+            &mut user_instruction_warnings,
         )
         .await;
-        user_instruction_warnings.extend(agents_md_warnings);
 
         let exec_policy = if crate::guardian::is_guardian_reviewer_source(&session_source) {
             // Guardian review should rely on the built-in shell safety checks,
