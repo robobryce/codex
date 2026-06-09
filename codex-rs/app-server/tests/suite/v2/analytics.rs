@@ -125,7 +125,8 @@ pub(crate) async fn wait_for_analytics_event(
     read_timeout: Duration,
     event_type: &str,
 ) -> Result<Value> {
-    let events = wait_for_analytics_events(server, read_timeout, event_type, 1).await?;
+    let events =
+        wait_for_analytics_events(server, read_timeout, event_type, /*expected_len*/ 1).await?;
     events
         .into_iter()
         .next()
