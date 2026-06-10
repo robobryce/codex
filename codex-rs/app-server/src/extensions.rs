@@ -77,6 +77,10 @@ where
             .with_remote_provider(Arc::new(codex_skills_extension::BackendSkillProvider::new(
                 CODEX_APPS_MCP_SERVER_NAME,
             ))),
+        |config: &Config| codex_skills_extension::SkillsExtensionConfig {
+            include_instructions: config.include_skill_instructions,
+            bundled_skills_enabled: config.bundled_skills_enabled(),
+        },
     );
     Arc::new(builder.build())
 }

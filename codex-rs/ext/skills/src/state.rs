@@ -1,24 +1,9 @@
-use codex_core::config::Config;
 use codex_protocol::capabilities::SelectedCapabilityRoot;
 use std::sync::Mutex;
 
+use crate::SkillsExtensionConfig;
 use crate::catalog::SkillCatalog;
 use crate::catalog::SkillCatalogEntry;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SkillsExtensionConfig {
-    pub(crate) include_instructions: bool,
-    pub(crate) bundled_skills_enabled: bool,
-}
-
-impl SkillsExtensionConfig {
-    pub(crate) fn from_config(config: &Config) -> Self {
-        Self {
-            include_instructions: config.include_skill_instructions,
-            bundled_skills_enabled: config.bundled_skills_enabled(),
-        }
-    }
-}
 
 #[derive(Debug)]
 pub(crate) struct SkillsThreadState {
