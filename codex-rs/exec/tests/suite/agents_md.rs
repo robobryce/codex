@@ -72,3 +72,169 @@ async fn exec_prefers_workspace_agents_override_md() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_surfaces_project_instruction_loading_warnings() -> anyhow::Result<()> {
+    let test = test_codex_exec();
+    let project_agents_path = test.cwd_path().join("AGENTS.md");
+    std::fs::write(&project_agents_path, b"project\xFFinstructions")?;
+
+    let server = responses::start_mock_server().await;
+    let body = responses::sse(vec![
+        responses::ev_response_created("resp1"),
+        responses::ev_assistant_message("m1", "fixture hello"),
+        responses::ev_completed("resp1"),
+    ]);
+    responses::mount_sse_once(&server, body).await;
+
+    let output = test
+        .cmd_with_server(&server)
+        .arg("--skip-git-repo-check")
+        .arg("tell me something")
+        .assert()
+        .success()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(output)?;
+
+    assert_eq!(stderr.matches("invalid UTF-8").count(), 1, "{stderr}");
+    assert!(
+        stderr.contains(project_agents_path.display().to_string().as_str()),
+        "{stderr}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_json_surfaces_project_instruction_loading_warnings() -> anyhow::Result<()> {
+    let test = test_codex_exec();
+    let project_agents_path = test.cwd_path().join("AGENTS.md");
+    std::fs::write(&project_agents_path, b"project\xFFinstructions")?;
+
+    let server = responses::start_mock_server().await;
+    let body = responses::sse(vec![
+        responses::ev_response_created("resp1"),
+        responses::ev_assistant_message("m1", "fixture hello"),
+        responses::ev_completed("resp1"),
+    ]);
+    responses::mount_sse_once(&server, body).await;
+
+    let output = test
+        .cmd_with_server(&server)
+        .arg("--skip-git-repo-check")
+        .arg("--json")
+        .arg("tell me something")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let events = String::from_utf8(output)?
+        .lines()
+        .map(serde_json::from_str::<serde_json::Value>)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let warning_event_count = events
+        .iter()
+        .filter(|event| {
+            event["type"] == "item.completed"
+                && event["item"]["type"] == "error"
+                && event["item"]["message"].as_str().is_some_and(|message| {
+                    message.contains("invalid UTF-8")
+                        && message.contains(project_agents_path.display().to_string().as_str())
+                })
+        })
+        .count();
+
+    assert_eq!(
+        warning_event_count, 1,
+        "expected exactly one JSONL warning event; observed: {events:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_surfaces_global_instruction_loading_warning_once() -> anyhow::Result<()> {
+    let test = test_codex_exec();
+    let global_agents_path = test.home_path().join("AGENTS.md");
+    std::fs::write(&global_agents_path, b"global\xFFinstructions")?;
+
+    let server = responses::start_mock_server().await;
+    let body = responses::sse(vec![
+        responses::ev_response_created("resp1"),
+        responses::ev_assistant_message("m1", "fixture hello"),
+        responses::ev_completed("resp1"),
+    ]);
+    responses::mount_sse_once(&server, body).await;
+
+    let output = test
+        .cmd_with_server(&server)
+        .arg("--skip-git-repo-check")
+        .arg("tell me something")
+        .assert()
+        .success()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(output)?;
+
+    assert_eq!(stderr.matches("invalid UTF-8").count(), 1, "{stderr}");
+    assert!(
+        stderr.contains(global_agents_path.display().to_string().as_str()),
+        "{stderr}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_json_surfaces_global_instruction_loading_warning_once() -> anyhow::Result<()> {
+    let test = test_codex_exec();
+    let global_agents_path = test.home_path().join("AGENTS.md");
+    std::fs::write(&global_agents_path, b"global\xFFinstructions")?;
+
+    let server = responses::start_mock_server().await;
+    let body = responses::sse(vec![
+        responses::ev_response_created("resp1"),
+        responses::ev_assistant_message("m1", "fixture hello"),
+        responses::ev_completed("resp1"),
+    ]);
+    responses::mount_sse_once(&server, body).await;
+
+    let output = test
+        .cmd_with_server(&server)
+        .arg("--skip-git-repo-check")
+        .arg("--json")
+        .arg("tell me something")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let events = String::from_utf8(output)?
+        .lines()
+        .map(serde_json::from_str::<serde_json::Value>)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let warning_event_count = events
+        .iter()
+        .filter(|event| {
+            event["type"] == "item.completed"
+                && event["item"]["type"] == "error"
+                && event["item"]["message"].as_str().is_some_and(|message| {
+                    message.contains("invalid UTF-8")
+                        && message.contains(global_agents_path.display().to_string().as_str())
+                })
+        })
+        .count();
+
+    assert_eq!(
+        warning_event_count, 1,
+        "expected exactly one JSONL warning event; observed: {events:?}"
+    );
+
+    Ok(())
+}
