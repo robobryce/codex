@@ -661,6 +661,21 @@ fn ensure_workspace_allowed(
         .map_err(|message| std::io::Error::new(std::io::ErrorKind::PermissionDenied, message))
 }
 
+fn ensure_access_token_workspace_allowed(
+    expected_workspace_ids: Option<&[String]>,
+    auth: &CodexAuth,
+) -> std::io::Result<()> {
+    match auth {
+        CodexAuth::AgentIdentity(auth) => {
+            ensure_workspace_allowed(expected_workspace_ids, auth.account_id())
+        }
+        CodexAuth::PersonalAccessToken(auth) => {
+            ensure_workspace_allowed(expected_workspace_ids, auth.account_id())
+        }
+        CodexAuth::ApiKey(_) | CodexAuth::Chatgpt(_) | CodexAuth::ChatgptAuthTokens(_) => Ok(()),
+    }
+}
+
 /// Writes an in-memory auth payload for externally managed ChatGPT tokens.
 pub fn login_with_chatgpt_auth_tokens(
     codex_home: &Path,
@@ -899,9 +914,7 @@ async fn load_auth_with_source(
             chatgpt_base_url,
         )
         .await?;
-        if let CodexAuth::PersonalAccessToken(auth) = &auth {
-            ensure_workspace_allowed(forced_chatgpt_workspace_id, auth.account_id())?;
-        }
+        ensure_access_token_workspace_allowed(forced_chatgpt_workspace_id, &auth)?;
         return Ok(Some(LoadedAuth {
             auth,
             source: AuthSource::EphemeralStorage,
@@ -912,13 +925,13 @@ async fn load_auth_with_source(
         let auth = match classify_codex_access_token(&access_token) {
             CodexAccessToken::PersonalAccessToken(access_token) => {
                 let auth = PersonalAccessTokenAuth::load(access_token).await?;
-                ensure_workspace_allowed(forced_chatgpt_workspace_id, auth.account_id())?;
                 CodexAuth::PersonalAccessToken(auth)
             }
             CodexAccessToken::AgentIdentityJwt(jwt) => {
                 CodexAuth::from_agent_identity_jwt(jwt, chatgpt_base_url).await?
             }
         };
+        ensure_access_token_workspace_allowed(forced_chatgpt_workspace_id, &auth)?;
         return Ok(Some(LoadedAuth {
             auth,
             source: AuthSource::AccessTokenEnvironment,
@@ -944,9 +957,7 @@ async fn load_auth_with_source(
         chatgpt_base_url,
     )
     .await?;
-    if let CodexAuth::PersonalAccessToken(auth) = &auth {
-        ensure_workspace_allowed(forced_chatgpt_workspace_id, auth.account_id())?;
-    }
+    ensure_access_token_workspace_allowed(forced_chatgpt_workspace_id, &auth)?;
     Ok(Some(LoadedAuth {
         auth,
         source: AuthSource::PersistentStorage,

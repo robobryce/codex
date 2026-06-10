@@ -1014,6 +1014,47 @@ async fn auth_manager_rejects_env_personal_access_token_workspace_mismatch() {
 
 #[tokio::test]
 #[serial(codex_auth_env)]
+async fn auth_manager_rejects_env_agent_identity_workspace_mismatch() {
+    let codex_home = tempdir().unwrap();
+    let record = agent_identity_record(WORKSPACE_ID_DISALLOWED);
+    let agent_identity =
+        signed_agent_identity_jwt(&record, json!(record.plan_type)).expect("signed agent identity");
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/backend-api/wham/agent-identities/jwks"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(test_jwks_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/backend-api/v1/agent/agent-runtime-id/task/register"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "task_id": "task-123",
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let _access_token_guard = EnvVarGuard::set(CODEX_ACCESS_TOKEN_ENV_VAR, &agent_identity);
+    let chatgpt_base_url = format!("{}/backend-api", server.uri());
+    let _authapi_guard =
+        EnvVarGuard::set("CODEX_AGENT_IDENTITY_AUTHAPI_BASE_URL", &chatgpt_base_url);
+
+    let manager = AuthManager::new_with_workspace_restriction(
+        codex_home.path().to_path_buf(),
+        /*enable_codex_api_key_env*/ false,
+        AuthCredentialsStoreMode::File,
+        /*forced_chatgpt_workspace_id*/
+        Some(vec![WORKSPACE_ID_ALLOWED.to_string()]),
+        Some(chatgpt_base_url),
+    )
+    .await;
+
+    assert_eq!(manager.auth().await, None);
+    server.verify().await;
+}
+
+#[tokio::test]
+#[serial(codex_auth_env)]
 async fn auth_manager_rejects_stored_personal_access_token_workspace_mismatch() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -1054,6 +1095,66 @@ async fn auth_manager_rejects_stored_personal_access_token_workspace_mismatch() 
             /*forced_chatgpt_workspace_id*/
             Some(vec![WORKSPACE_ID_ALLOWED.to_string()]),
             /*chatgpt_base_url*/ None,
+        )
+        .await;
+
+        assert_eq!(manager.auth().await, None);
+    }
+    server.verify().await;
+}
+
+#[tokio::test]
+#[serial(codex_auth_env)]
+async fn auth_manager_rejects_stored_agent_identity_workspace_mismatch() {
+    let record = agent_identity_record(WORKSPACE_ID_DISALLOWED);
+    let agent_identity =
+        signed_agent_identity_jwt(&record, json!(record.plan_type)).expect("signed agent identity");
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/backend-api/wham/agent-identities/jwks"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(test_jwks_body()))
+        .expect(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/backend-api/v1/agent/agent-runtime-id/task/register"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "task_id": "task-123",
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+    let _access_token_guard = remove_access_token_env_var();
+    let chatgpt_base_url = format!("{}/backend-api", server.uri());
+    let _authapi_guard =
+        EnvVarGuard::set("CODEX_AGENT_IDENTITY_AUTHAPI_BASE_URL", &chatgpt_base_url);
+
+    for auth_credentials_store_mode in [
+        AuthCredentialsStoreMode::File,
+        AuthCredentialsStoreMode::Ephemeral,
+    ] {
+        let codex_home = tempdir().unwrap();
+        save_auth(
+            codex_home.path(),
+            &AuthDotJson {
+                auth_mode: Some(ApiAuthMode::AgentIdentity),
+                openai_api_key: None,
+                tokens: None,
+                last_refresh: None,
+                agent_identity: Some(agent_identity.clone()),
+                personal_access_token: None,
+            },
+            auth_credentials_store_mode,
+        )
+        .expect("seed agent identity auth");
+
+        let manager = AuthManager::new_with_workspace_restriction(
+            codex_home.path().to_path_buf(),
+            /*enable_codex_api_key_env*/ false,
+            auth_credentials_store_mode,
+            /*forced_chatgpt_workspace_id*/
+            Some(vec![WORKSPACE_ID_ALLOWED.to_string()]),
+            Some(chatgpt_base_url.clone()),
         )
         .await;
 
