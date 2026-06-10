@@ -1037,6 +1037,7 @@ mod tests {
                 codex_home_path.clone(),
                 /*enable_codex_api_key_env*/ false,
                 AuthCredentialsStoreMode::File,
+                /*forced_chatgpt_workspace_id*/ None,
                 "https://chatgpt.com/backend-api/".to_string(),
             )
             .await,

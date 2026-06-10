@@ -716,6 +716,21 @@ pub struct GhostSnapshotToml {
 }
 
 impl ConfigToml {
+    /// Returns configured ChatGPT workspace IDs after trimming and removing empty entries.
+    pub fn forced_chatgpt_workspace_ids(&self) -> Option<Vec<String>> {
+        self.forced_chatgpt_workspace_id
+            .clone()
+            .map(ForcedChatgptWorkspaceIds::into_vec)
+            .map(|values| {
+                values
+                    .into_iter()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|values| !values.is_empty())
+    }
+
     /// Derive the effective permission profile from legacy sandbox config.
     ///
     /// Call this only after ruling out `default_permissions`: named

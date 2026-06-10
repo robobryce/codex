@@ -265,6 +265,7 @@ async fn start_app_server_for_archive_command(
         codex_home.to_path_buf(),
         /*enable_codex_api_key_env*/ false,
         config_toml.cli_auth_credentials_store.unwrap_or_default(),
+        config_toml.forced_chatgpt_workspace_ids(),
         chatgpt_base_url,
     )
     .await;

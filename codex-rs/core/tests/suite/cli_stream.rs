@@ -44,7 +44,7 @@ fn cli_sse_response() -> String {
     ])
 }
 
-async fn mount_personal_access_token_startup(server: &MockServer) {
+async fn mount_personal_access_token_whoami(server: &MockServer) {
     Mock::given(method("GET"))
         .and(path(WHOAMI_PATH))
         .and(header("authorization", PERSONAL_ACCESS_TOKEN_AUTHORIZATION))
@@ -58,6 +58,10 @@ async fn mount_personal_access_token_startup(server: &MockServer) {
         .expect(1..)
         .mount(server)
         .await;
+}
+
+async fn mount_personal_access_token_startup(server: &MockServer) {
+    mount_personal_access_token_whoami(server).await;
     Mock::given(method("GET"))
         .and(path(CLOUD_CONFIG_BUNDLE_PATH))
         .and(header("authorization", PERSONAL_ACCESS_TOKEN_AUTHORIZATION))
@@ -180,7 +184,13 @@ async fn responses_mode_stream_cli_rejects_personal_access_token_for_disallowed_
     skip_if_no_network!();
 
     let server = MockServer::start().await;
-    mount_personal_access_token_startup(&server).await;
+    mount_personal_access_token_whoami(&server).await;
+    Mock::given(method("GET"))
+        .and(path(CLOUD_CONFIG_BUNDLE_PATH))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
     Mock::given(method("POST"))
         .and(path("/api/codex/responses"))
         .respond_with(ResponseTemplate::new(500))

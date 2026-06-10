@@ -1028,6 +1028,7 @@ pub async fn run_main(
         bootstrap_config_toml
             .cli_auth_credentials_store
             .unwrap_or_default(),
+        bootstrap_config_toml.forced_chatgpt_workspace_ids(),
         chatgpt_base_url,
     )
     .await;
@@ -1495,6 +1496,7 @@ async fn run_ratatui_app(
                 initial_config.codex_home.to_path_buf(),
                 /*enable_codex_api_key_env*/ false,
                 initial_config.cli_auth_credentials_store_mode,
+                initial_config.forced_chatgpt_workspace_id.clone(),
                 initial_config.chatgpt_base_url.clone(),
             )
             .await;

@@ -351,6 +351,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         bootstrap_config_toml
             .cli_auth_credentials_store
             .unwrap_or_default(),
+        bootstrap_config_toml.forced_chatgpt_workspace_ids(),
         chatgpt_base_url,
     )
     .await;

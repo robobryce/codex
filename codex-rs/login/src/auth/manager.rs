@@ -1821,11 +1821,30 @@ impl AuthManager {
         auth_credentials_store_mode: AuthCredentialsStoreMode,
         chatgpt_base_url: Option<String>,
     ) -> Arc<Self> {
+        Self::shared_with_workspace_restriction(
+            codex_home,
+            enable_codex_api_key_env,
+            auth_credentials_store_mode,
+            /*forced_chatgpt_workspace_id*/ None,
+            chatgpt_base_url,
+        )
+        .await
+    }
+
+    /// Convenience constructor that enforces workspace restrictions while loading auth.
+    pub async fn shared_with_workspace_restriction(
+        codex_home: PathBuf,
+        enable_codex_api_key_env: bool,
+        auth_credentials_store_mode: AuthCredentialsStoreMode,
+        forced_chatgpt_workspace_id: Option<Vec<String>>,
+        chatgpt_base_url: Option<String>,
+    ) -> Arc<Self> {
         Arc::new(
-            Self::new(
+            Self::new_with_workspace_restriction(
                 codex_home,
                 enable_codex_api_key_env,
                 auth_credentials_store_mode,
+                forced_chatgpt_workspace_id,
                 chatgpt_base_url,
             )
             .await,
@@ -1837,16 +1856,14 @@ impl AuthManager {
         config: &impl AuthManagerConfig,
         enable_codex_api_key_env: bool,
     ) -> Arc<Self> {
-        Arc::new(
-            Self::new_with_workspace_restriction(
-                config.codex_home(),
-                enable_codex_api_key_env,
-                config.cli_auth_credentials_store_mode(),
-                config.forced_chatgpt_workspace_id(),
-                Some(config.chatgpt_base_url()),
-            )
-            .await,
+        Self::shared_with_workspace_restriction(
+            config.codex_home(),
+            enable_codex_api_key_env,
+            config.cli_auth_credentials_store_mode(),
+            config.forced_chatgpt_workspace_id(),
+            Some(config.chatgpt_base_url()),
         )
+        .await
     }
 
     pub fn unauthorized_recovery(self: &Arc<Self>) -> UnauthorizedRecovery {
