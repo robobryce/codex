@@ -2211,7 +2211,7 @@ mod tests {
             .build()
             .await
             .expect("config should load");
-        let _ = config.features.set_enabled(Feature::Apps, true);
+        let _ = config.features.set_enabled(Feature::Apps, /*enabled*/ true);
         let plugin_apps = vec![codex_plugin::AppConnectorId("alpha".to_string())];
         let chatgpt_auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
         let agent_identity_auth = CodexAuth::create_dummy_agent_identity_auth_for_testing();
@@ -2236,7 +2236,7 @@ mod tests {
             "API-key auth should keep plugin MCP OAuth"
         );
         assert!(
-            should_start_plugin_mcp_oauth_for_install(&config, None, &plugin_apps),
+            should_start_plugin_mcp_oauth_for_install(&config, /*auth*/ None, &plugin_apps),
             "missing auth should keep plugin MCP OAuth"
         );
     }
