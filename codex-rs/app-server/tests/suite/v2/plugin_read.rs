@@ -17,6 +17,7 @@ use axum::http::Uri;
 use axum::http::header::AUTHORIZATION;
 use axum::routing::get;
 use codex_app_server_protocol::AppInfo;
+use codex_app_server_protocol::AppMetadata;
 use codex_app_server_protocol::AppTemplateSummary;
 use codex_app_server_protocol::AppTemplateUnavailableReason;
 use codex_app_server_protocol::HookEventName;
@@ -434,6 +435,7 @@ async fn plugin_read_reads_remote_plugin_details_when_remote_plugin_enabled() ->
         "template_id": "templated_apps_GitHubEnterprise",
         "name": "GitHub Enterprise",
         "description": "Connect GitHub Enterprise",
+        "category": "Developer Tools",
         "canonical_connector_id": "github_enterprise",
         "logo_url": "https://example.com/ghe-light.png",
         "logo_url_dark": "https://example.com/ghe-dark.png",
@@ -595,6 +597,7 @@ async fn plugin_read_reads_remote_plugin_details_when_remote_plugin_enabled() ->
                 template_id: "templated_apps_GitHubEnterprise".to_string(),
                 name: "GitHub Enterprise".to_string(),
                 description: Some("Connect GitHub Enterprise".to_string()),
+                category: Some("Developer Tools".to_string()),
                 canonical_connector_id: Some("github_enterprise".to_string()),
                 logo_url: Some("https://example.com/ghe-light.png".to_string()),
                 logo_url_dark: Some("https://example.com/ghe-dark.png".to_string()),
@@ -605,6 +608,7 @@ async fn plugin_read_reads_remote_plugin_details_when_remote_plugin_enabled() ->
                 template_id: "templated_apps_Databricks".to_string(),
                 name: "Databricks".to_string(),
                 description: None,
+                category: None,
                 canonical_connector_id: None,
                 logo_url: None,
                 logo_url_dark: None,
@@ -1313,7 +1317,8 @@ description: Visible only for ChatGPT
         r#"{
   "apps": {
     "gmail": {
-      "id": "gmail"
+      "id": "gmail",
+      "category": "Communication"
     }
   }
 }"#,
@@ -1484,6 +1489,10 @@ enabled = false
         Some("https://chatgpt.com/apps/gmail/gmail")
     );
     assert_eq!(response.plugin.apps[0].needs_auth, true);
+    assert_eq!(
+        response.plugin.apps[0].category.as_deref(),
+        Some("Communication")
+    );
     assert_eq!(response.plugin.mcp_servers.len(), 1);
     assert_eq!(response.plugin.mcp_servers[0], "demo");
     Ok(())
@@ -1500,7 +1509,20 @@ async fn plugin_read_returns_app_needs_auth() -> Result<()> {
             logo_url_dark: None,
             distribution_channel: Some("featured".to_string()),
             branding: None,
-            app_metadata: None,
+            app_metadata: Some(AppMetadata {
+                review: None,
+                categories: Some(vec!["Productivity".to_string()]),
+                sub_categories: None,
+                seo_description: None,
+                screenshots: None,
+                developer: None,
+                version: None,
+                version_id: None,
+                version_notes: None,
+                first_party_type: None,
+                first_party_requires_install: None,
+                show_in_composer_when_unlinked: None,
+            }),
             labels: None,
             install_url: None,
             is_accessible: false,
@@ -1571,9 +1593,9 @@ async fn plugin_read_returns_app_needs_auth() -> Result<()> {
             .plugin
             .apps
             .iter()
-            .map(|app| (app.id.as_str(), app.needs_auth))
+            .map(|app| (app.id.as_str(), app.needs_auth, app.category.as_deref()))
             .collect::<Vec<_>>(),
-        vec![("alpha", true), ("beta", false)]
+        vec![("alpha", true, Some("Productivity")), ("beta", false, None)]
     );
 
     server_handle.abort();

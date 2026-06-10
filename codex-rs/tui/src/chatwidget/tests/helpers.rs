@@ -1455,6 +1455,7 @@ pub(super) fn plugins_test_detail(
                 description: Some(format!("{name} app")),
                 install_url: Some(format!("https://example.test/{name}")),
                 needs_auth: *needs_auth,
+                category: None,
             })
             .collect(),
         app_templates: Vec::new(),
