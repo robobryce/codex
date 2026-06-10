@@ -1832,7 +1832,7 @@ async fn mount_remote_plugin_detail_with_status_app_manifest_and_app_ids(
     let app_manifest_field = app_manifest
         .map(|manifest| format!(r#"    "app_manifest": {manifest},"#))
         .unwrap_or_default();
-    let app_ids = serde_json::to_string(app_ids).expect("app ids should serialize");
+    let app_ids = serde_json::json!(app_ids);
     let detail_body = format!(
         r#"{{
   "id": "{remote_plugin_id}",
