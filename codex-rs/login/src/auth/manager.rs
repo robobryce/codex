@@ -621,7 +621,7 @@ pub async fn login_with_access_token(
     let auth_dot_json = match classify_codex_access_token(access_token) {
         CodexAccessToken::PersonalAccessToken(access_token) => {
             let auth = PersonalAccessTokenAuth::load(access_token).await?;
-            ensure_personal_access_token_workspace_allowed(forced_chatgpt_workspace_id, &auth)?;
+            ensure_workspace_allowed(forced_chatgpt_workspace_id, auth.account_id())?;
             AuthDotJson {
                 // Infer PAT auth from the credential field so older Codex builds can still
                 // deserialize auth.json after a rollback.
@@ -638,7 +638,8 @@ pub async fn login_with_access_token(
                 .unwrap_or(DEFAULT_CHATGPT_BACKEND_BASE_URL)
                 .trim_end_matches('/')
                 .to_string();
-            verified_agent_identity_record(jwt, &base_url).await?;
+            let record = verified_agent_identity_record(jwt, &base_url).await?;
+            ensure_workspace_allowed(forced_chatgpt_workspace_id, &record.account_id)?;
             AuthDotJson {
                 auth_mode: Some(ApiAuthMode::AgentIdentity),
                 openai_api_key: None,
@@ -652,11 +653,11 @@ pub async fn login_with_access_token(
     save_auth(codex_home, &auth_dot_json, auth_credentials_store_mode)
 }
 
-fn ensure_personal_access_token_workspace_allowed(
+fn ensure_workspace_allowed(
     expected_workspace_ids: Option<&[String]>,
-    auth: &PersonalAccessTokenAuth,
+    account_id: &str,
 ) -> std::io::Result<()> {
-    crate::server::ensure_workspace_account_allowed(expected_workspace_ids, auth.account_id())
+    crate::server::ensure_workspace_account_allowed(expected_workspace_ids, account_id)
         .map_err(|message| std::io::Error::new(std::io::ErrorKind::PermissionDenied, message))
 }
 
@@ -899,7 +900,7 @@ async fn load_auth_with_source(
         )
         .await?;
         if let CodexAuth::PersonalAccessToken(auth) = &auth {
-            ensure_personal_access_token_workspace_allowed(forced_chatgpt_workspace_id, auth)?;
+            ensure_workspace_allowed(forced_chatgpt_workspace_id, auth.account_id())?;
         }
         return Ok(Some(LoadedAuth {
             auth,
@@ -911,7 +912,7 @@ async fn load_auth_with_source(
         let auth = match classify_codex_access_token(&access_token) {
             CodexAccessToken::PersonalAccessToken(access_token) => {
                 let auth = PersonalAccessTokenAuth::load(access_token).await?;
-                ensure_personal_access_token_workspace_allowed(forced_chatgpt_workspace_id, &auth)?;
+                ensure_workspace_allowed(forced_chatgpt_workspace_id, auth.account_id())?;
                 CodexAuth::PersonalAccessToken(auth)
             }
             CodexAccessToken::AgentIdentityJwt(jwt) => {
@@ -944,7 +945,7 @@ async fn load_auth_with_source(
     )
     .await?;
     if let CodexAuth::PersonalAccessToken(auth) = &auth {
-        ensure_personal_access_token_workspace_allowed(forced_chatgpt_workspace_id, auth)?;
+        ensure_workspace_allowed(forced_chatgpt_workspace_id, auth.account_id())?;
     }
     Ok(Some(LoadedAuth {
         auth,

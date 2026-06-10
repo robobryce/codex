@@ -103,12 +103,13 @@ async fn login_with_access_token_writes_only_token() {
         .mount(&server)
         .await;
     let chatgpt_base_url = format!("{}/backend-api", server.uri());
+    let allowed_workspaces = [WORKSPACE_ID_ALLOWED.to_string()];
 
     super::login_with_access_token(
         dir.path(),
         &agent_identity,
         AuthCredentialsStoreMode::File,
-        /*forced_chatgpt_workspace_id*/ None,
+        Some(&allowed_workspaces),
         Some(&chatgpt_base_url),
     )
     .await
@@ -125,6 +126,40 @@ async fn login_with_access_token_writes_only_token() {
     );
     assert!(auth.tokens.is_none(), "tokens should be cleared");
     assert!(auth.openai_api_key.is_none(), "API key should be cleared");
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn login_with_access_token_rejects_agent_identity_workspace_mismatch() {
+    let dir = tempdir().unwrap();
+    let record = agent_identity_record(WORKSPACE_ID_DISALLOWED);
+    let agent_identity =
+        signed_agent_identity_jwt(&record, json!(record.plan_type)).expect("signed agent identity");
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/backend-api/wham/agent-identities/jwks"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(test_jwks_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let chatgpt_base_url = format!("{}/backend-api", server.uri());
+    let allowed_workspaces = [WORKSPACE_ID_ALLOWED.to_string()];
+
+    let err = super::login_with_access_token(
+        dir.path(),
+        &agent_identity,
+        AuthCredentialsStoreMode::File,
+        Some(&allowed_workspaces),
+        Some(&chatgpt_base_url),
+    )
+    .await
+    .expect_err("agent identity workspace mismatch should fail");
+
+    assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+    assert!(
+        !get_auth_file(dir.path()).exists(),
+        "workspace mismatch should not write auth.json"
+    );
     server.verify().await;
 }
 
