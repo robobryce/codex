@@ -291,7 +291,7 @@ pub async fn read_mcp_resource(
     let result = manager
         .read_resource(server, ReadResourceRequestParams::new(uri))
         .await;
-    manager.shutdown().await;
+    manager.cancel_startup();
     result
 }
 
@@ -366,7 +366,7 @@ pub async fn collect_mcp_server_status_snapshot_with_detail(
     )
     .await;
 
-    mcp_connection_manager.shutdown().await;
+    mcp_connection_manager.cancel_startup();
 
     snapshot
 }

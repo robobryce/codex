@@ -7049,6 +7049,7 @@ pub(crate) async fn make_session_and_context_with_rx() -> (
 #[tokio::test]
 async fn refresh_mcp_servers_is_deferred_until_next_turn() {
     let (session, turn_context) = make_session_and_context().await;
+    let old_manager = session.services.mcp_connection_manager.load_full();
 
     let mcp_oauth_credentials_store_mode =
         serde_json::to_value(OAuthCredentialsStoreMode::Auto).expect("serialize store mode");
@@ -7061,24 +7062,38 @@ async fn refresh_mcp_servers_is_deferred_until_next_turn() {
         *guard = Some(refresh_config);
     }
 
-    assert!(
-        session
-            .pending_mcp_server_refresh_config
-            .lock()
-            .await
-            .is_some()
+    assert_eq!(
+        (
+            Arc::ptr_eq(
+                &old_manager,
+                &session.services.mcp_connection_manager.load_full()
+            ),
+            session
+                .pending_mcp_server_refresh_config
+                .lock()
+                .await
+                .is_some(),
+        ),
+        (true, true)
     );
 
     session
-        .refresh_mcp_servers_if_requested(&turn_context)
+        .refresh_mcp_servers_if_requested(&turn_context, /*elicitation_reviewer*/ None)
         .await;
 
-    assert!(
-        session
-            .pending_mcp_server_refresh_config
-            .lock()
-            .await
-            .is_none()
+    assert_eq!(
+        (
+            Arc::ptr_eq(
+                &old_manager,
+                &session.services.mcp_connection_manager.load_full()
+            ),
+            session
+                .pending_mcp_server_refresh_config
+                .lock()
+                .await
+                .is_some(),
+        ),
+        (false, false)
     );
 }
 

@@ -38,7 +38,7 @@ use tokio::sync::Mutex;
 use tokio::sync::watch;
 
 pub(crate) struct SessionServices {
-    /// The installed manager; callers retain an owned handle while performing MCP I/O.
+    /// The latest manager; callers retain an owned handle while performing MCP I/O.
     pub(crate) mcp_connection_manager: ArcSwap<McpConnectionManager>,
     pub(crate) unified_exec_manager: UnifiedExecProcessManager,
     #[cfg_attr(not(unix), allow(dead_code))]

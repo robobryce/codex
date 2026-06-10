@@ -39,29 +39,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tempfile::tempdir;
 
-fn update_connections(manager: &McpConnectionManager, update: impl FnOnce(&mut McpConnections)) {
-    let mut connections = manager.connections.load_full().as_ref().clone();
-    connections.startup_cancellation_token = CancellationToken::new();
-    update(&mut connections);
-    manager.connections.store(Arc::new(connections));
-}
-
-fn insert_client(manager: &McpConnectionManager, server_name: String, client: AsyncManagedClient) {
-    update_connections(manager, |connections| {
-        connections.clients.insert(server_name, client);
-    });
-}
-
-fn insert_server_metadata(
-    manager: &McpConnectionManager,
-    server_name: String,
-    metadata: McpServerMetadata,
-) {
-    update_connections(manager, |connections| {
-        connections.server_metadata.insert(server_name, metadata);
-    });
-}
-
 fn create_test_tool(server_name: &str, tool_name: &str) -> ToolInfo {
     ToolInfo {
         server_name: server_name.to_string(),
@@ -822,13 +799,12 @@ async fn list_all_tools_uses_cached_tool_info_snapshot_while_client_is_pending()
         .shared();
     let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
     let permission_profile = Constrained::allow_any(PermissionProfile::default());
-    let manager = McpConnectionManager::new_uninitialized(
+    let mut manager = McpConnectionManager::new_uninitialized(
         &approval_policy,
         &permission_profile,
         /*prefix_mcp_tool_names*/ true,
     );
-    insert_client(
-        &manager,
+    manager.clients.insert(
         CODEX_APPS_MCP_SERVER_NAME.to_string(),
         AsyncManagedClient {
             client: pending_client,
@@ -859,14 +835,13 @@ async fn list_available_server_infos_uses_cache_while_client_is_pending() {
         .shared();
     let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
     let permission_profile = Constrained::allow_any(PermissionProfile::default());
-    let manager = McpConnectionManager::new_uninitialized(
+    let mut manager = McpConnectionManager::new_uninitialized(
         &approval_policy,
         &permission_profile,
         /*prefix_mcp_tool_names*/ true,
     );
     let server_info = create_test_server_info("Codex Apps");
-    insert_client(
-        &manager,
+    manager.clients.insert(
         CODEX_APPS_MCP_SERVER_NAME.to_string(),
         AsyncManagedClient {
             client: pending_client,
@@ -898,13 +873,12 @@ async fn list_all_tools_accepts_canonical_namespaced_tool_names() {
         .shared();
     let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
     let permission_profile = Constrained::allow_any(PermissionProfile::default());
-    let manager = McpConnectionManager::new_uninitialized(
+    let mut manager = McpConnectionManager::new_uninitialized(
         &approval_policy,
         &permission_profile,
         /*prefix_mcp_tool_names*/ false,
     );
-    insert_client(
-        &manager,
+    manager.clients.insert(
         "rmcp".to_string(),
         AsyncManagedClient {
             client: pending_client,
@@ -942,13 +916,12 @@ async fn list_all_tools_applies_legacy_mcp_prefix_by_default() {
         .shared();
     let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
     let permission_profile = Constrained::allow_any(PermissionProfile::default());
-    let manager = McpConnectionManager::new_uninitialized(
+    let mut manager = McpConnectionManager::new_uninitialized(
         &approval_policy,
         &permission_profile,
         /*prefix_mcp_tool_names*/ true,
     );
-    insert_client(
-        &manager,
+    manager.clients.insert(
         "rmcp".to_string(),
         AsyncManagedClient {
             client: pending_client,
@@ -985,13 +958,12 @@ async fn list_all_tools_blocks_while_client_is_pending_without_cached_tool_info_
         .shared();
     let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
     let permission_profile = Constrained::allow_any(PermissionProfile::default());
-    let manager = McpConnectionManager::new_uninitialized(
+    let mut manager = McpConnectionManager::new_uninitialized(
         &approval_policy,
         &permission_profile,
         /*prefix_mcp_tool_names*/ true,
     );
-    insert_client(
-        &manager,
+    manager.clients.insert(
         CODEX_APPS_MCP_SERVER_NAME.to_string(),
         AsyncManagedClient {
             client: pending_client,
@@ -1008,6 +980,21 @@ async fn list_all_tools_blocks_while_client_is_pending_without_cached_tool_info_
     assert!(timeout_result.is_err());
 }
 
+#[test]
+fn cancel_startup_cancels_manager_owned_token() {
+    let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
+    let permission_profile = Constrained::allow_any(PermissionProfile::default());
+    let manager = McpConnectionManager::new_uninitialized(
+        &approval_policy,
+        &permission_profile,
+        /*prefix_mcp_tool_names*/ true,
+    );
+
+    manager.cancel_startup();
+
+    assert!(manager.startup_cancellation_token.is_cancelled());
+}
+
 #[tokio::test]
 async fn shutdown_cancels_pending_tool_listing() {
     let cancel_token = CancellationToken::new();
@@ -1022,13 +1009,12 @@ async fn shutdown_cancels_pending_tool_listing() {
     .shared();
     let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
     let permission_profile = Constrained::allow_any(PermissionProfile::default());
-    let manager = McpConnectionManager::new_uninitialized(
+    let mut manager = McpConnectionManager::new_uninitialized(
         &approval_policy,
         &permission_profile,
         /*prefix_mcp_tool_names*/ true,
     );
-    insert_client(
-        &manager,
+    manager.clients.insert(
         CODEX_APPS_MCP_SERVER_NAME.to_string(),
         AsyncManagedClient {
             client: pending_client,
@@ -1058,13 +1044,12 @@ async fn list_all_tools_does_not_block_when_cached_tool_info_snapshot_is_empty()
         .shared();
     let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
     let permission_profile = Constrained::allow_any(PermissionProfile::default());
-    let manager = McpConnectionManager::new_uninitialized(
+    let mut manager = McpConnectionManager::new_uninitialized(
         &approval_policy,
         &permission_profile,
         /*prefix_mcp_tool_names*/ true,
     );
-    insert_client(
-        &manager,
+    manager.clients.insert(
         CODEX_APPS_MCP_SERVER_NAME.to_string(),
         AsyncManagedClient {
             client: pending_client,
@@ -1098,14 +1083,13 @@ async fn list_all_tools_uses_cached_tool_info_snapshot_when_client_startup_fails
     .shared();
     let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
     let permission_profile = Constrained::allow_any(PermissionProfile::default());
-    let manager = McpConnectionManager::new_uninitialized(
+    let mut manager = McpConnectionManager::new_uninitialized(
         &approval_policy,
         &permission_profile,
         /*prefix_mcp_tool_names*/ true,
     );
     let startup_complete = Arc::new(std::sync::atomic::AtomicBool::new(true));
-    insert_client(
-        &manager,
+    manager.clients.insert(
         CODEX_APPS_MCP_SERVER_NAME.to_string(),
         AsyncManagedClient {
             client: failed_client,
@@ -1145,13 +1129,12 @@ async fn list_all_tools_adds_server_metadata_to_cached_tools() {
         .shared();
     let approval_policy = Constrained::allow_any(AskForApproval::OnFailure);
     let permission_profile = Constrained::allow_any(PermissionProfile::default());
-    let manager = McpConnectionManager::new_uninitialized(
+    let mut manager = McpConnectionManager::new_uninitialized(
         &approval_policy,
         &permission_profile,
         /*prefix_mcp_tool_names*/ true,
     );
-    insert_server_metadata(
-        &manager,
+    manager.server_metadata.insert(
         server_name.to_string(),
         McpServerMetadata {
             pollutes_memory: true,
@@ -1161,8 +1144,7 @@ async fn list_all_tools_adds_server_metadata_to_cached_tools() {
             supports_parallel_tool_calls: true,
         },
     );
-    insert_client(
-        &manager,
+    manager.clients.insert(
         server_name.to_string(),
         AsyncManagedClient {
             client: pending_client,
@@ -1269,15 +1251,14 @@ async fn no_local_runtime_fails_local_stdio_but_keeps_local_http_server() {
     )
     .await;
 
-    assert!(manager.connections.load().clients.contains_key("stdio"));
-    assert!(manager.connections.load().clients.contains_key("http"));
+    assert!(manager.clients.contains_key("stdio"));
+    assert!(manager.clients.contains_key("http"));
     assert!(
         !manager
             .wait_for_server_ready("stdio", Duration::from_millis(10))
             .await
     );
-    let connections = manager.connections.load_full();
-    let error = match connections
+    let error = match manager
         .clients
         .get("stdio")
         .expect("stdio client")

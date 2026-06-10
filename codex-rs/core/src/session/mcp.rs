@@ -285,6 +285,7 @@ impl Session {
         turn_context: &TurnContext,
         mcp_servers: HashMap<String, McpServerConfig>,
         store_mode: OAuthCredentialsStoreMode,
+        elicitation_reviewer: Option<ElicitationReviewerHandle>,
     ) {
         let auth = self.services.auth_manager.auth().await;
         let config = self.get_config().await;
@@ -315,27 +316,38 @@ impl Session {
                 turn_context.cwd.to_path_buf(),
             ),
         };
+        let current_manager = self.services.mcp_connection_manager.load_full();
+        current_manager.cancel_startup();
+        let refreshed_manager = McpConnectionManager::new(
+            &mcp_servers,
+            store_mode,
+            auth_statuses,
+            &turn_context.approval_policy,
+            turn_context.sub_id.clone(),
+            self.get_tx_event(),
+            turn_context.permission_profile(),
+            mcp_runtime_context,
+            config.codex_home.to_path_buf(),
+            codex_apps_tools_cache_key(auth.as_ref()),
+            host_owned_codex_apps_enabled,
+            mcp_config.prefix_mcp_tool_names,
+            mcp_config.client_elicitation_capability,
+            tool_plugin_provenance,
+            auth.as_ref(),
+            elicitation_reviewer,
+        )
+        .await;
+        refreshed_manager.set_elicitations_auto_deny(current_manager.elicitations_auto_deny());
         self.services
             .mcp_connection_manager
-            .load_full()
-            .refresh(McpConnectionRefresh {
-                servers: mcp_servers,
-                store_mode,
-                auth_entries: auth_statuses,
-                submit_id: turn_context.sub_id.clone(),
-                tx_event: self.get_tx_event(),
-                runtime_context: mcp_runtime_context,
-                codex_home: config.codex_home.to_path_buf(),
-                codex_apps_tools_cache_key: codex_apps_tools_cache_key(auth.as_ref()),
-                host_owned_codex_apps_enabled,
-                prefix_mcp_tool_names: mcp_config.prefix_mcp_tool_names,
-                client_elicitation_capability: mcp_config.client_elicitation_capability,
-                tool_plugin_provenance,
-                auth: auth.as_ref(),
-            });
+            .store(Arc::new(refreshed_manager));
     }
 
-    pub(crate) async fn refresh_mcp_servers_if_requested(&self, turn_context: &TurnContext) {
+    pub(crate) async fn refresh_mcp_servers_if_requested(
+        &self,
+        turn_context: &TurnContext,
+        elicitation_reviewer: Option<ElicitationReviewerHandle>,
+    ) {
         let refresh_config = { self.pending_mcp_server_refresh_config.lock().await.take() };
         let Some(refresh_config) = refresh_config else {
             return;
@@ -364,7 +376,7 @@ impl Session {
             }
         };
 
-        self.refresh_mcp_servers_inner(turn_context, mcp_servers, store_mode)
+        self.refresh_mcp_servers_inner(turn_context, mcp_servers, store_mode, elicitation_reviewer)
             .await;
     }
 
@@ -373,8 +385,9 @@ impl Session {
         turn_context: &TurnContext,
         mcp_servers: HashMap<String, McpServerConfig>,
         store_mode: OAuthCredentialsStoreMode,
+        elicitation_reviewer: Option<ElicitationReviewerHandle>,
     ) {
-        self.refresh_mcp_servers_inner(turn_context, mcp_servers, store_mode)
+        self.refresh_mcp_servers_inner(turn_context, mcp_servers, store_mode, elicitation_reviewer)
             .await;
     }
 
