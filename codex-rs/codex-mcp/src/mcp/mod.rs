@@ -12,6 +12,7 @@ pub use auth::should_retry_without_scopes;
 pub(crate) mod auth;
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -241,7 +242,20 @@ pub fn effective_mcp_servers_from_configured(
         .into_iter()
         .map(|(name, server)| (name, EffectiveMcpServer::configured(server)))
         .collect::<HashMap<_, _>>();
-    if !host_owned_codex_apps_enabled(config, auth) {
+    if host_owned_codex_apps_enabled(config, auth) {
+        let plugin_ids_with_app_surface = config
+            .plugin_capability_summaries
+            .iter()
+            .filter(|plugin| !plugin.app_connector_ids.is_empty())
+            .map(|plugin| plugin.config_name.as_str())
+            .collect::<HashSet<_>>();
+        servers.retain(|name, _| {
+            let Some(plugin_id) = config.plugin_ids_by_mcp_server_name.get(name) else {
+                return true;
+            };
+            !plugin_ids_with_app_surface.contains(plugin_id.as_str())
+        });
+    } else {
         servers.remove(CODEX_APPS_MCP_SERVER_NAME);
     }
     servers
