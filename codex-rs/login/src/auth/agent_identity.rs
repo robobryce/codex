@@ -32,6 +32,22 @@ impl AgentIdentityAuth {
         })
     }
 
+    /// Consider this private to integration tests.
+    pub fn create_dummy_for_testing() -> Self {
+        Self {
+            record: AgentIdentityAuthRecord {
+                agent_runtime_id: "agent-runtime-id".to_string(),
+                agent_private_key: String::new(),
+                account_id: "account_id".to_string(),
+                chatgpt_user_id: "user-id".to_string(),
+                email: "user@example.com".to_string(),
+                plan_type: AccountPlanType::Pro,
+                chatgpt_account_is_fedramp: false,
+            },
+            process_task_id: "task-id".to_string(),
+        }
+    }
+
     pub fn record(&self) -> &AgentIdentityAuthRecord {
         &self.record
     }

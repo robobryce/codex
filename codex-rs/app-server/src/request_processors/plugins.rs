@@ -186,7 +186,7 @@ fn plugin_app_route_available_for_install(
 
     if !config
         .features
-        .apps_enabled_for_auth(auth.is_some_and(CodexAuth::uses_codex_backend))
+        .apps_enabled_for_auth(auth.is_some_and(CodexAuth::is_chatgpt_auth))
     {
         return false;
     }
@@ -2195,4 +2195,49 @@ fn remote_plugin_bundle_install_error_to_jsonrpc(
     err: codex_core_plugins::remote_bundle::RemotePluginBundleInstallError,
 ) -> JSONRPCErrorError {
     internal_error(format!("install remote plugin bundle: {err}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_core::config::ConfigBuilder;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn plugin_mcp_oauth_install_gate_matches_app_auth_modes() {
+        let codex_home = tempdir().expect("tempdir");
+        let mut config = ConfigBuilder::default()
+            .codex_home(codex_home.path().to_path_buf())
+            .build()
+            .await
+            .expect("config should load");
+        let _ = config.features.set_enabled(Feature::Apps, true);
+        let plugin_apps = vec![codex_plugin::AppConnectorId("alpha".to_string())];
+        let chatgpt_auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
+        let agent_identity_auth = CodexAuth::create_dummy_agent_identity_auth_for_testing();
+        let api_key_auth = CodexAuth::from_api_key("test-api-key");
+
+        assert!(agent_identity_auth.uses_codex_backend());
+        assert!(!agent_identity_auth.is_chatgpt_auth());
+        assert!(
+            !should_start_plugin_mcp_oauth_for_install(&config, Some(&chatgpt_auth), &plugin_apps),
+            "ChatGPT-account auth should use the plugin app route"
+        );
+        assert!(
+            should_start_plugin_mcp_oauth_for_install(
+                &config,
+                Some(&agent_identity_auth),
+                &plugin_apps,
+            ),
+            "agent identity auth should keep plugin MCP OAuth"
+        );
+        assert!(
+            should_start_plugin_mcp_oauth_for_install(&config, Some(&api_key_auth), &plugin_apps),
+            "API-key auth should keep plugin MCP OAuth"
+        );
+        assert!(
+            should_start_plugin_mcp_oauth_for_install(&config, None, &plugin_apps),
+            "missing auth should keep plugin MCP OAuth"
+        );
+    }
 }

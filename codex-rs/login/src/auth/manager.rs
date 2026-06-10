@@ -487,6 +487,11 @@ impl CodexAuth {
         Self::Chatgpt(ChatgptAuth { state, storage })
     }
 
+    /// Consider this private to integration tests.
+    pub fn create_dummy_agent_identity_auth_for_testing() -> Self {
+        Self::AgentIdentity(AgentIdentityAuth::create_dummy_for_testing())
+    }
+
     pub fn from_api_key(api_key: &str) -> Self {
         Self::ApiKey(ApiKeyAuth {
             api_key: api_key.to_owned(),
