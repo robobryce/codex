@@ -166,6 +166,18 @@ fn remote_installed_plugin_visible_marketplaces(config: &Config) -> Vec<&'static
     marketplaces
 }
 
+fn should_start_plugin_mcp_oauth_for_install(
+    config: &Config,
+    auth: Option<&CodexAuth>,
+    plugin_apps: &[codex_plugin::AppConnectorId],
+) -> bool {
+    let app_route_available = !plugin_apps.is_empty()
+        && config
+            .features
+            .apps_enabled_for_auth(auth.is_some_and(CodexAuth::uses_codex_backend));
+    !app_route_available
+}
+
 fn filter_openai_curated_installed_conflicts(
     marketplaces: &mut Vec<PluginMarketplaceEntry>,
     prefer_remote_curated_conflicts: bool,
@@ -1434,14 +1446,15 @@ impl PluginRequestProcessor {
 
         self.on_effective_plugins_changed();
 
+        let plugin_apps = load_plugin_apps(result.installed_path.as_path()).await;
         let plugin_mcp_servers = load_plugin_mcp_servers(result.installed_path.as_path()).await;
-        if !plugin_mcp_servers.is_empty() {
+        if !plugin_mcp_servers.is_empty()
+            && should_start_plugin_mcp_oauth_for_install(&config, auth.as_ref(), &plugin_apps)
+        {
             self.start_plugin_mcp_oauth_logins(&config, plugin_mcp_servers)
                 .await;
         }
 
-        let plugin_apps = load_plugin_apps(result.installed_path.as_path()).await;
-        let auth = self.auth_manager.auth().await;
         let apps_needing_auth = self
             .plugin_apps_needing_auth_for_install(
                 &config,
@@ -1550,8 +1563,11 @@ impl PluginRequestProcessor {
         self.analytics_events_client
             .track_plugin_installed(plugin_metadata);
 
+        let plugin_apps = load_plugin_apps(result.installed_path.as_path()).await;
         let plugin_mcp_servers = load_plugin_mcp_servers(result.installed_path.as_path()).await;
-        if !plugin_mcp_servers.is_empty() {
+        if !plugin_mcp_servers.is_empty()
+            && should_start_plugin_mcp_oauth_for_install(&config, auth.as_ref(), &plugin_apps)
+        {
             self.start_plugin_mcp_oauth_logins(&config, plugin_mcp_servers)
                 .await;
         }
@@ -1583,7 +1599,6 @@ impl PluginRequestProcessor {
                         .collect()
                 }
             } else {
-                let plugin_apps = load_plugin_apps(result.installed_path.as_path()).await;
                 self.plugin_apps_needing_auth_for_install(
                     &config,
                     is_chatgpt_auth,

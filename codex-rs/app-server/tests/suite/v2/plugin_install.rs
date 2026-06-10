@@ -1013,6 +1013,132 @@ async fn plugin_install_returns_apps_needing_auth() -> Result<()> {
 }
 
 #[tokio::test]
+async fn plugin_install_skips_mcp_oauth_for_chatgpt_dual_surface_plugin() -> Result<()> {
+    let connectors = vec![AppInfo {
+        id: "alpha".to_string(),
+        name: "Alpha".to_string(),
+        description: Some("Alpha connector".to_string()),
+        logo_url: Some("https://example.com/alpha.png".to_string()),
+        logo_url_dark: None,
+        distribution_channel: Some("featured".to_string()),
+        branding: None,
+        app_metadata: None,
+        labels: None,
+        install_url: None,
+        is_accessible: false,
+        is_enabled: true,
+        plugin_display_names: Vec::new(),
+    }];
+    let (apps_server_url, apps_server_handle, _apps_server_control) =
+        start_apps_server(connectors, Vec::new()).await?;
+    let oauth_server = MockServer::start().await;
+
+    let codex_home = TempDir::new()?;
+    write_connectors_config(codex_home.path(), &apps_server_url)?;
+    write_chatgpt_auth(
+        codex_home.path(),
+        ChatGptAuthFixture::new("chatgpt-token")
+            .account_id("account-123")
+            .chatgpt_user_id("user-123")
+            .chatgpt_account_id("account-123"),
+        AuthCredentialsStoreMode::File,
+    )?;
+
+    let repo_root = TempDir::new()?;
+    write_plugin_marketplace(
+        repo_root.path(),
+        "debug",
+        "sample-plugin",
+        "./sample-plugin",
+        /*install_policy*/ None,
+        /*auth_policy*/ None,
+    )?;
+    write_plugin_source(repo_root.path(), "sample-plugin", &["alpha"])?;
+    write_plugin_mcp_config(repo_root.path(), "sample-plugin", &oauth_server.uri())?;
+    let marketplace_path =
+        AbsolutePathBuf::try_from(repo_root.path().join(".agents/plugins/marketplace.json"))?;
+
+    let mut mcp = TestAppServer::new(codex_home.path()).await?;
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_plugin_install_request(PluginInstallParams {
+            marketplace_path: Some(marketplace_path),
+            remote_marketplace_name: None,
+            plugin_name: "sample-plugin".to_string(),
+        })
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    let response: PluginInstallResponse = to_response(response)?;
+
+    assert_eq!(response.auth_policy, PluginAuthPolicy::OnInstall);
+    assert_eq!(oauth_discovery_request_count(&oauth_server).await, 0);
+
+    apps_server_handle.abort();
+    let _ = apps_server_handle.await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn plugin_install_starts_mcp_oauth_for_api_key_dual_surface_plugin() -> Result<()> {
+    let oauth_server = MockServer::start().await;
+    let codex_home = TempDir::new()?;
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        r#"
+mcp_oauth_credentials_store = "file"
+
+[features]
+plugins = true
+connectors = true
+"#,
+    )?;
+
+    let repo_root = TempDir::new()?;
+    write_plugin_marketplace(
+        repo_root.path(),
+        "debug",
+        "sample-plugin",
+        "./sample-plugin",
+        /*install_policy*/ None,
+        /*auth_policy*/ None,
+    )?;
+    write_plugin_source(repo_root.path(), "sample-plugin", &["alpha"])?;
+    write_plugin_mcp_config(repo_root.path(), "sample-plugin", &oauth_server.uri())?;
+    let marketplace_path =
+        AbsolutePathBuf::try_from(repo_root.path().join(".agents/plugins/marketplace.json"))?;
+
+    let mut mcp = TestAppServer::new_with_env(
+        codex_home.path(),
+        &[("OPENAI_API_KEY", Some("test-api-key"))],
+    )
+    .await?;
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_plugin_install_request(PluginInstallParams {
+            marketplace_path: Some(marketplace_path),
+            remote_marketplace_name: None,
+            plugin_name: "sample-plugin".to_string(),
+        })
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    let response: PluginInstallResponse = to_response(response)?;
+
+    assert_eq!(response.auth_policy, PluginAuthPolicy::OnInstall);
+    assert!(oauth_discovery_request_count(&oauth_server).await > 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn plugin_install_filters_disallowed_apps_needing_auth() -> Result<()> {
     let connectors = vec![AppInfo {
         id: "alpha".to_string(),
@@ -1421,6 +1547,16 @@ async fn wait_for_plugin_analytics_payload(server: &MockServer) -> Result<serde_
     .await?
 }
 
+async fn oauth_discovery_request_count(server: &MockServer) -> usize {
+    server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|request| request.url.path().contains("oauth-authorization-server"))
+        .count()
+}
+
 fn write_remote_plugin_catalog_config(
     codex_home: &std::path::Path,
     base_url: &str,
@@ -1795,6 +1931,27 @@ fn write_plugin_source(
     std::fs::write(
         plugin_root.join(".app.json"),
         serde_json::to_vec_pretty(&json!({ "apps": apps }))?,
+    )?;
+    Ok(())
+}
+
+fn write_plugin_mcp_config(
+    repo_root: &std::path::Path,
+    plugin_name: &str,
+    mcp_base_url: &str,
+) -> Result<()> {
+    std::fs::write(
+        repo_root.join(plugin_name).join(".mcp.json"),
+        format!(
+            r#"{{
+  "mcpServers": {{
+    "sample-mcp": {{
+      "type": "http",
+      "url": "{mcp_base_url}/mcp"
+    }}
+  }}
+}}"#
+        ),
     )?;
     Ok(())
 }
