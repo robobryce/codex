@@ -1852,7 +1852,6 @@ dependencies = [
 name = "codex-agent-graph-store"
 version = "0.0.0"
 dependencies = [
- "async-trait",
  "codex-protocol",
  "codex-state",
  "pretty_assertions",
@@ -2215,7 +2214,6 @@ dependencies = [
 name = "codex-async-utils"
 version = "0.0.0"
 dependencies = [
- "async-trait",
  "pretty_assertions",
  "tokio",
  "tokio-util",
@@ -3679,7 +3677,6 @@ name = "codex-rollout"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "chrono",
  "codex-file-search",
  "codex-git-utils",
@@ -4223,7 +4220,6 @@ name = "codex-utils-readiness"
 version = "0.0.0"
 dependencies = [
  "assert_matches",
- "async-trait",
  "thiserror 2.0.18",
  "time",
  "tokio",
