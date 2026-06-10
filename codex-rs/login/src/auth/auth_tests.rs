@@ -1197,6 +1197,53 @@ async fn enforce_login_restrictions_logs_out_for_personal_access_token_workspace
 
 #[tokio::test]
 #[serial(codex_auth_env)]
+async fn enforce_login_restrictions_preserves_stored_auth_for_env_pat_workspace_mismatch() {
+    let codex_home = tempdir().unwrap();
+    super::login_with_api_key(
+        codex_home.path(),
+        "sk-stored",
+        AuthCredentialsStoreMode::File,
+    )
+    .expect("stored login should succeed");
+    let auth_path = get_auth_file(codex_home.path());
+    let stored_auth = std::fs::read(&auth_path).expect("stored auth should exist");
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/user-auth-credential/whoami"))
+        .and(header("authorization", "Bearer at-env-workspace-mismatch"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(personal_access_token_whoami(WORKSPACE_ID_DISALLOWED)),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let _authapi_guard = EnvVarGuard::set("CODEX_AUTHAPI_BASE_URL", &server.uri());
+    let _api_key_guard = EnvVarGuard::remove(CODEX_API_KEY_ENV_VAR);
+    let _access_token_guard =
+        EnvVarGuard::set(CODEX_ACCESS_TOKEN_ENV_VAR, "at-env-workspace-mismatch");
+    let config = build_config(
+        codex_home.path(),
+        /*forced_login_method*/ None,
+        Some(vec![WORKSPACE_ID_ALLOWED.to_string()]),
+    )
+    .await;
+
+    let err = super::enforce_login_restrictions(&config)
+        .await
+        .expect_err("environment personal access token should be rejected");
+
+    assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+    assert_eq!(
+        std::fs::read(auth_path).expect("stored auth should remain"),
+        stored_auth
+    );
+    server.verify().await;
+}
+
+#[tokio::test]
+#[serial(codex_auth_env)]
 async fn enforce_login_restrictions_allows_matching_workspace() {
     let codex_home = tempdir().unwrap();
     let _access_token_guard = remove_access_token_env_var();

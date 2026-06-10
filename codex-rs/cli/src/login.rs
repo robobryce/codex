@@ -366,9 +366,10 @@ pub async fn run_login_with_device_code_fallback_to_browser(
 pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {
     let config = load_config_or_exit(cli_config_overrides).await;
 
-    match CodexAuth::from_auth_storage(
+    match CodexAuth::from_auth_storage_with_workspace_restriction(
         &config.codex_home,
         config.cli_auth_credentials_store_mode,
+        config.forced_chatgpt_workspace_id.as_deref(),
         Some(&config.chatgpt_base_url),
     )
     .await
