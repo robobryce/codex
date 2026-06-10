@@ -809,8 +809,7 @@ pub async fn enforce_login_restrictions(config: &AuthConfig) -> std::io::Result<
                     "Login is restricted to workspace(s) {expected_workspaces}, but current credentials lack a workspace identifier."
                 ),
             };
-            if source == AuthSource::AccessTokenEnvironment && auth.is_personal_access_token_auth()
-            {
+            if source == AuthSource::AccessTokenEnvironment {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
                     message,

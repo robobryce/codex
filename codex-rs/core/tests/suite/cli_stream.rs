@@ -176,6 +176,36 @@ async fn responses_mode_stream_cli_supports_personal_access_tokens() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn responses_mode_stream_cli_rejects_personal_access_token_for_disallowed_workspace() {
+    skip_if_no_network!();
+
+    let server = MockServer::start().await;
+    mount_personal_access_token_startup(&server).await;
+    Mock::given(method("POST"))
+        .and(path("/api/codex/responses"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let home = TempDir::new().unwrap();
+    std::fs::write(
+        home.path().join("config.toml"),
+        "forced_chatgpt_workspace_id = \"account-allowed\"\n",
+    )
+    .unwrap();
+
+    let mut cmd = personal_access_token_exec_command(&server, &home);
+    let output = run_cli_command(&mut cmd).unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "codex exec succeeded: {stderr}");
+    assert!(stderr.contains(
+        "Login is restricted to workspace(s) account-allowed, but current credentials belong to account-pat."
+    ), "unexpected stderr: {stderr}");
+    server.verify().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn responses_mode_stream_cli_does_not_attempt_oauth_refresh_for_personal_access_tokens_after_401()
  {
     skip_if_no_network!();

@@ -1380,6 +1380,62 @@ async fn enforce_login_restrictions_preserves_stored_auth_for_env_pat_workspace_
 
 #[tokio::test]
 #[serial(codex_auth_env)]
+async fn enforce_login_restrictions_preserves_stored_auth_for_env_agent_identity() {
+    let codex_home = tempdir().unwrap();
+    super::login_with_api_key(
+        codex_home.path(),
+        "sk-stored",
+        AuthCredentialsStoreMode::File,
+    )
+    .expect("stored login should succeed");
+    let auth_path = get_auth_file(codex_home.path());
+    let stored_auth = std::fs::read(&auth_path).expect("stored auth should exist");
+
+    let record = agent_identity_record(WORKSPACE_ID_DISALLOWED);
+    let agent_identity =
+        signed_agent_identity_jwt(&record, json!(record.plan_type)).expect("signed agent identity");
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/backend-api/wham/agent-identities/jwks"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(test_jwks_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/backend-api/v1/agent/agent-runtime-id/task/register"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "task_id": "task-123",
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let chatgpt_base_url = format!("{}/backend-api", server.uri());
+    let _authapi_guard =
+        EnvVarGuard::set("CODEX_AGENT_IDENTITY_AUTHAPI_BASE_URL", &chatgpt_base_url);
+    let _api_key_guard = EnvVarGuard::remove(CODEX_API_KEY_ENV_VAR);
+    let _access_token_guard = EnvVarGuard::set(CODEX_ACCESS_TOKEN_ENV_VAR, &agent_identity);
+    let config = AuthConfig {
+        codex_home: codex_home.path().to_path_buf(),
+        auth_credentials_store_mode: AuthCredentialsStoreMode::File,
+        forced_login_method: None,
+        forced_chatgpt_workspace_id: Some(vec![WORKSPACE_ID_ALLOWED.to_string()]),
+        chatgpt_base_url: Some(chatgpt_base_url),
+    };
+
+    let err = super::enforce_login_restrictions(&config)
+        .await
+        .expect_err("environment agent identity should be rejected");
+
+    assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+    assert_eq!(
+        std::fs::read(auth_path).expect("stored auth should remain"),
+        stored_auth
+    );
+    server.verify().await;
+}
+
+#[tokio::test]
+#[serial(codex_auth_env)]
 async fn enforce_login_restrictions_allows_matching_workspace() {
     let codex_home = tempdir().unwrap();
     let _access_token_guard = remove_access_token_env_var();
