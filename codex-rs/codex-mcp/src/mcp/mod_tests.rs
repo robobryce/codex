@@ -291,6 +291,7 @@ fn effective_mcp_servers_routes_plugin_surfaces_by_auth() {
         name: &'static str,
         apps_enabled: bool,
         auth: AuthKind,
+        codex_apps_server_present: bool,
         plugin_owned_mcp: bool,
         app_connector_ids: &'static [&'static str],
         expected_server_names: &'static [&'static str],
@@ -301,6 +302,7 @@ fn effective_mcp_servers_routes_plugin_surfaces_by_auth() {
             name: "api key keeps plugin mcp and removes codex apps",
             apps_enabled: true,
             auth: AuthKind::ApiKey,
+            codex_apps_server_present: true,
             plugin_owned_mcp: true,
             app_connector_ids: &["connector_sample"],
             expected_server_names: &["plugin-mcp"],
@@ -309,14 +311,25 @@ fn effective_mcp_servers_routes_plugin_surfaces_by_auth() {
             name: "chatgpt uses app route for dual-surface plugin",
             apps_enabled: true,
             auth: AuthKind::ChatGpt,
+            codex_apps_server_present: true,
             plugin_owned_mcp: true,
             app_connector_ids: &["connector_sample"],
             expected_server_names: &[CODEX_APPS_MCP_SERVER_NAME],
         },
         Case {
+            name: "chatgpt keeps plugin mcp when app route is absent",
+            apps_enabled: true,
+            auth: AuthKind::ChatGpt,
+            codex_apps_server_present: false,
+            plugin_owned_mcp: true,
+            app_connector_ids: &["connector_sample"],
+            expected_server_names: &["plugin-mcp"],
+        },
+        Case {
             name: "chatgpt keeps mcp-only plugin mcp",
             apps_enabled: true,
             auth: AuthKind::ChatGpt,
+            codex_apps_server_present: true,
             plugin_owned_mcp: true,
             app_connector_ids: &[],
             expected_server_names: &[CODEX_APPS_MCP_SERVER_NAME, "plugin-mcp"],
@@ -325,6 +338,7 @@ fn effective_mcp_servers_routes_plugin_surfaces_by_auth() {
             name: "apps disabled keeps plugin mcp and removes codex apps",
             apps_enabled: false,
             auth: AuthKind::ChatGpt,
+            codex_apps_server_present: true,
             plugin_owned_mcp: true,
             app_connector_ids: &["connector_sample"],
             expected_server_names: &["plugin-mcp"],
@@ -333,6 +347,7 @@ fn effective_mcp_servers_routes_plugin_surfaces_by_auth() {
             name: "chatgpt keeps user-configured mcp even with matching plugin metadata",
             apps_enabled: true,
             auth: AuthKind::ChatGpt,
+            codex_apps_server_present: true,
             plugin_owned_mcp: false,
             app_connector_ids: &["connector_sample"],
             expected_server_names: &[CODEX_APPS_MCP_SERVER_NAME, "plugin-mcp"],
@@ -347,13 +362,15 @@ fn effective_mcp_servers_routes_plugin_surfaces_by_auth() {
             "plugin-mcp".to_string(),
             streamable_mcp_server_config("https://plugin.example/mcp"),
         );
-        config.configured_mcp_servers.insert(
-            CODEX_APPS_MCP_SERVER_NAME.to_string(),
-            codex_apps_mcp_server_config(
-                &config.chatgpt_base_url,
-                config.apps_mcp_product_sku.as_deref(),
-            ),
-        );
+        if case.codex_apps_server_present {
+            config.configured_mcp_servers.insert(
+                CODEX_APPS_MCP_SERVER_NAME.to_string(),
+                codex_apps_mcp_server_config(
+                    &config.chatgpt_base_url,
+                    config.apps_mcp_product_sku.as_deref(),
+                ),
+            );
+        }
         if case.plugin_owned_mcp {
             config
                 .plugin_ids_by_mcp_server_name
