@@ -209,6 +209,7 @@ impl CodexAuth {
         codex_home: &Path,
         auth_dot_json: AuthDotJson,
         auth_credentials_store_mode: AuthCredentialsStoreMode,
+        forced_chatgpt_workspace_id: Option<&[String]>,
         chatgpt_base_url: Option<&str>,
     ) -> std::io::Result<Self> {
         let auth_mode = auth_dot_json.resolved_mode();
@@ -225,7 +226,12 @@ impl CodexAuth {
                     "agent identity auth is missing an agent identity token.",
                 ));
             };
-            return Self::from_agent_identity_jwt(&agent_identity, chatgpt_base_url).await;
+            return Self::from_agent_identity_jwt_with_workspace_restriction(
+                &agent_identity,
+                forced_chatgpt_workspace_id,
+                chatgpt_base_url,
+            )
+            .await;
         }
         if auth_mode == ApiAuthMode::PersonalAccessToken {
             let Some(personal_access_token) = auth_dot_json.personal_access_token.as_deref() else {
@@ -272,7 +278,7 @@ impl CodexAuth {
         .await
     }
 
-    /// Loads stored auth while enforcing a workspace restriction for personal access tokens.
+    /// Loads stored auth while enforcing a workspace restriction for access tokens.
     pub async fn from_auth_storage_with_workspace_restriction(
         codex_home: &Path,
         auth_credentials_store_mode: AuthCredentialsStoreMode,
@@ -293,11 +299,26 @@ impl CodexAuth {
         jwt: &str,
         chatgpt_base_url: Option<&str>,
     ) -> std::io::Result<Self> {
+        Self::from_agent_identity_jwt_with_workspace_restriction(
+            jwt,
+            /*forced_chatgpt_workspace_id*/ None,
+            chatgpt_base_url,
+        )
+        .await
+    }
+
+    /// Verifies the workspace before registering an Agent Identity task.
+    pub async fn from_agent_identity_jwt_with_workspace_restriction(
+        jwt: &str,
+        forced_chatgpt_workspace_id: Option<&[String]>,
+        chatgpt_base_url: Option<&str>,
+    ) -> std::io::Result<Self> {
         let base_url = chatgpt_base_url
             .unwrap_or(DEFAULT_CHATGPT_BACKEND_BASE_URL)
             .trim_end_matches('/')
             .to_string();
         let record = verified_agent_identity_record(jwt, &base_url).await?;
+        ensure_workspace_allowed(forced_chatgpt_workspace_id, &record.account_id)?;
         Ok(Self::AgentIdentity(AgentIdentityAuth::load(record).await?))
     }
 
@@ -657,9 +678,32 @@ fn ensure_workspace_allowed(
     expected_workspace_ids: Option<&[String]>,
     account_id: &str,
 ) -> std::io::Result<()> {
-    crate::server::ensure_workspace_account_allowed(expected_workspace_ids, account_id)
-        .map_err(|message| std::io::Error::new(std::io::ErrorKind::PermissionDenied, message))
+    crate::server::ensure_workspace_account_allowed(expected_workspace_ids, account_id).map_err(
+        |message| {
+            std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                WorkspaceMismatchError {
+                    account_id: account_id.to_string(),
+                    message,
+                },
+            )
+        },
+    )
 }
+
+#[derive(Debug)]
+struct WorkspaceMismatchError {
+    account_id: String,
+    message: String,
+}
+
+impl std::fmt::Display for WorkspaceMismatchError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for WorkspaceMismatchError {}
 
 fn ensure_access_token_workspace_allowed(
     expected_workspace_ids: Option<&[String]>,
@@ -732,7 +776,8 @@ pub async fn enforce_login_restrictions(config: &AuthConfig) -> std::io::Result<
         &config.codex_home,
         /*enable_codex_api_key_env*/ true,
         config.auth_credentials_store_mode,
-        /*forced_chatgpt_workspace_id*/ None,
+        config.forced_chatgpt_workspace_id.as_deref(),
+        WorkspaceRestrictionScope::LoginEnforcement(config),
         config.chatgpt_base_url.as_deref(),
     )
     .await?
@@ -800,26 +845,13 @@ pub async fn enforce_login_restrictions(config: &AuthConfig) -> std::io::Result<
                 .iter()
                 .any(|expected| expected == actual)
         }) {
-            let expected_workspaces = expected_account_ids.join(", ");
-            let message = match chatgpt_account_id {
-                Some(actual) => format!(
-                    "Login is restricted to workspace(s) {expected_workspaces}, but current credentials belong to {actual}."
-                ),
-                None => format!(
-                    "Login is restricted to workspace(s) {expected_workspaces}, but current credentials lack a workspace identifier."
-                ),
-            };
-            if source == AuthSource::AccessTokenEnvironment {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    message,
-                ));
-            }
-            return logout_with_message(
+            return Err(workspace_mismatch_error(
                 &config.codex_home,
-                format!("{message} Logging out."),
+                expected_account_ids,
+                chatgpt_account_id,
+                source,
                 config.auth_credentials_store_mode,
-            );
+            ));
         }
     }
 
@@ -831,6 +863,18 @@ fn logout_with_message(
     message: String,
     auth_credentials_store_mode: AuthCredentialsStoreMode,
 ) -> std::io::Result<()> {
+    Err(logout_error(
+        codex_home,
+        message,
+        auth_credentials_store_mode,
+    ))
+}
+
+fn logout_error(
+    codex_home: &Path,
+    message: String,
+    auth_credentials_store_mode: AuthCredentialsStoreMode,
+) -> std::io::Error {
     // External auth tokens live in the ephemeral store, but persistent auth may still exist
     // from earlier logins. Clear both so a forced logout truly removes all active auth.
     let removal_result = logout_all_stores(codex_home, auth_credentials_store_mode);
@@ -838,7 +882,33 @@ fn logout_with_message(
         Ok(_) => message,
         Err(err) => format!("{message}. Failed to remove auth.json: {err}"),
     };
-    Err(std::io::Error::other(error_message))
+    std::io::Error::other(error_message)
+}
+
+fn workspace_mismatch_error(
+    codex_home: &Path,
+    expected_account_ids: &[String],
+    actual_account_id: Option<&str>,
+    source: AuthSource,
+    auth_credentials_store_mode: AuthCredentialsStoreMode,
+) -> std::io::Error {
+    let expected_workspaces = expected_account_ids.join(", ");
+    let message = match actual_account_id {
+        Some(actual) => format!(
+            "Login is restricted to workspace(s) {expected_workspaces}, but current credentials belong to {actual}."
+        ),
+        None => format!(
+            "Login is restricted to workspace(s) {expected_workspaces}, but current credentials lack a workspace identifier."
+        ),
+    };
+    if source == AuthSource::AccessTokenEnvironment {
+        return std::io::Error::new(std::io::ErrorKind::PermissionDenied, message);
+    }
+    logout_error(
+        codex_home,
+        format!("{message} Logging out."),
+        auth_credentials_store_mode,
+    )
 }
 
 fn logout_all_stores(
@@ -866,6 +936,48 @@ struct LoadedAuth {
     source: AuthSource,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum WorkspaceRestrictionScope<'a> {
+    AllAccessTokens,
+    LoginEnforcement(&'a AuthConfig),
+}
+
+impl WorkspaceRestrictionScope<'_> {
+    fn for_loaded_access_token(
+        self,
+        forced_chatgpt_workspace_id: Option<&[String]>,
+    ) -> Option<&[String]> {
+        match self {
+            Self::AllAccessTokens => forced_chatgpt_workspace_id,
+            Self::LoginEnforcement(_) => None,
+        }
+    }
+
+    fn handle_auth_load_result(
+        self,
+        result: std::io::Result<CodexAuth>,
+        source: AuthSource,
+    ) -> std::io::Result<CodexAuth> {
+        result.map_err(|error| {
+            if let Self::LoginEnforcement(config) = self
+                && let Some(mismatch) = error
+                    .get_ref()
+                    .and_then(|inner| inner.downcast_ref::<WorkspaceMismatchError>())
+                && let Some(expected_account_ids) = config.forced_chatgpt_workspace_id.as_deref()
+            {
+                return workspace_mismatch_error(
+                    &config.codex_home,
+                    expected_account_ids,
+                    Some(&mismatch.account_id),
+                    source,
+                    config.auth_credentials_store_mode,
+                );
+            }
+            error
+        })
+    }
+}
+
 async fn load_auth(
     codex_home: &Path,
     enable_codex_api_key_env: bool,
@@ -878,6 +990,7 @@ async fn load_auth(
         enable_codex_api_key_env,
         auth_credentials_store_mode,
         forced_chatgpt_workspace_id,
+        WorkspaceRestrictionScope::AllAccessTokens,
         chatgpt_base_url,
     )
     .await?
@@ -889,6 +1002,7 @@ async fn load_auth_with_source(
     enable_codex_api_key_env: bool,
     auth_credentials_store_mode: AuthCredentialsStoreMode,
     forced_chatgpt_workspace_id: Option<&[String]>,
+    workspace_restriction_scope: WorkspaceRestrictionScope<'_>,
     chatgpt_base_url: Option<&str>,
 ) -> std::io::Result<Option<LoadedAuth>> {
     // API key via env var takes precedence over any other auth method.
@@ -906,35 +1020,47 @@ async fn load_auth_with_source(
         AuthCredentialsStoreMode::Ephemeral,
     );
     if let Some(auth_dot_json) = ephemeral_storage.load()? {
-        let auth = CodexAuth::from_auth_dot_json(
-            codex_home,
-            auth_dot_json,
-            AuthCredentialsStoreMode::Ephemeral,
-            chatgpt_base_url,
-        )
-        .await?;
-        ensure_access_token_workspace_allowed(forced_chatgpt_workspace_id, &auth)?;
-        return Ok(Some(LoadedAuth {
-            auth,
-            source: AuthSource::EphemeralStorage,
-        }));
+        let source = AuthSource::EphemeralStorage;
+        let auth = workspace_restriction_scope.handle_auth_load_result(
+            CodexAuth::from_auth_dot_json(
+                codex_home,
+                auth_dot_json,
+                AuthCredentialsStoreMode::Ephemeral,
+                forced_chatgpt_workspace_id,
+                chatgpt_base_url,
+            )
+            .await,
+            source,
+        )?;
+        ensure_access_token_workspace_allowed(
+            workspace_restriction_scope.for_loaded_access_token(forced_chatgpt_workspace_id),
+            &auth,
+        )?;
+        return Ok(Some(LoadedAuth { auth, source }));
     }
 
     if let Some(access_token) = read_codex_access_token_from_env() {
-        let auth = match classify_codex_access_token(&access_token) {
+        let source = AuthSource::AccessTokenEnvironment;
+        let result = match classify_codex_access_token(&access_token) {
             CodexAccessToken::PersonalAccessToken(access_token) => {
                 let auth = PersonalAccessTokenAuth::load(access_token).await?;
-                CodexAuth::PersonalAccessToken(auth)
+                Ok(CodexAuth::PersonalAccessToken(auth))
             }
             CodexAccessToken::AgentIdentityJwt(jwt) => {
-                CodexAuth::from_agent_identity_jwt(jwt, chatgpt_base_url).await?
+                CodexAuth::from_agent_identity_jwt_with_workspace_restriction(
+                    jwt,
+                    forced_chatgpt_workspace_id,
+                    chatgpt_base_url,
+                )
+                .await
             }
         };
-        ensure_access_token_workspace_allowed(forced_chatgpt_workspace_id, &auth)?;
-        return Ok(Some(LoadedAuth {
-            auth,
-            source: AuthSource::AccessTokenEnvironment,
-        }));
+        let auth = workspace_restriction_scope.handle_auth_load_result(result, source)?;
+        ensure_access_token_workspace_allowed(
+            workspace_restriction_scope.for_loaded_access_token(forced_chatgpt_workspace_id),
+            &auth,
+        )?;
+        return Ok(Some(LoadedAuth { auth, source }));
     }
 
     // If the caller explicitly requested ephemeral auth, there is no persisted fallback.
@@ -949,18 +1075,23 @@ async fn load_auth_with_source(
         None => return Ok(None),
     };
 
-    let auth = CodexAuth::from_auth_dot_json(
-        codex_home,
-        auth_dot_json,
-        auth_credentials_store_mode,
-        chatgpt_base_url,
-    )
-    .await?;
-    ensure_access_token_workspace_allowed(forced_chatgpt_workspace_id, &auth)?;
-    Ok(Some(LoadedAuth {
-        auth,
-        source: AuthSource::PersistentStorage,
-    }))
+    let source = AuthSource::PersistentStorage;
+    let auth = workspace_restriction_scope.handle_auth_load_result(
+        CodexAuth::from_auth_dot_json(
+            codex_home,
+            auth_dot_json,
+            auth_credentials_store_mode,
+            forced_chatgpt_workspace_id,
+            chatgpt_base_url,
+        )
+        .await,
+        source,
+    )?;
+    ensure_access_token_workspace_allowed(
+        workspace_restriction_scope.for_loaded_access_token(forced_chatgpt_workspace_id),
+        &auth,
+    )?;
+    Ok(Some(LoadedAuth { auth, source }))
 }
 
 // Persist refreshed tokens into auth storage and update last_refresh.

@@ -29,6 +29,7 @@ const PERSONAL_ACCESS_TOKEN_AUTHORIZATION: &str = "Bearer at-cli-test";
 const PERSONAL_ACCESS_TOKEN_ACCOUNT_ID: &str = "account-pat";
 const WHOAMI_PATH: &str = "/v1/user-auth-credential/whoami";
 const CLOUD_CONFIG_BUNDLE_PATH: &str = "/backend-api/wham/config/bundle";
+const CLOUD_TASKS_LIST_PATH: &str = "/backend-api/wham/tasks/list";
 const CLI_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn repo_root() -> std::path::PathBuf {
@@ -92,6 +93,24 @@ fn personal_access_token_exec_command(server: &MockServer, home: &TempDir) -> Co
     cmd
 }
 
+#[expect(clippy::unwrap_used)]
+fn personal_access_token_cloud_list_command(server: &MockServer, home: &TempDir) -> Command {
+    let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
+    let mut cmd = Command::new(bin);
+    cmd.args(["cloud", "list", "--json"])
+        .current_dir(home.path())
+        .env("CODEX_HOME", home.path())
+        .env(CODEX_ACCESS_TOKEN_ENV_VAR, PERSONAL_ACCESS_TOKEN)
+        .env("CODEX_AUTHAPI_BASE_URL", server.uri())
+        .env(
+            "CODEX_CLOUD_TASKS_BASE_URL",
+            format!("{}/backend-api", server.uri()),
+        )
+        .env_remove(CODEX_API_KEY_ENV_VAR)
+        .env_remove("OPENAI_API_KEY");
+    cmd
+}
+
 struct ChildProcessCleanupGuard(u32);
 
 impl Drop for ChildProcessCleanupGuard {
@@ -118,7 +137,7 @@ impl Drop for ChildProcessCleanupGuard {
     }
 }
 
-// Use this for new `codex exec` subprocess tests in this file. These commands
+// Use this for new CLI subprocess tests in this file. These commands
 // can spawn shell/Python grandchildren, so the timeout path must reap the whole
 // process group instead of only the direct CLI child.
 fn run_cli_command(command: &mut Command) -> io::Result<Output> {
@@ -212,6 +231,37 @@ async fn responses_mode_stream_cli_rejects_personal_access_token_for_disallowed_
     assert!(stderr.contains(
         "Login is restricted to workspace(s) account-allowed, but current credentials belong to account-pat."
     ), "unexpected stderr: {stderr}");
+    server.verify().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cloud_list_cli_rejects_personal_access_token_for_disallowed_workspace() {
+    skip_if_no_network!();
+
+    let server = MockServer::start().await;
+    mount_personal_access_token_whoami(&server).await;
+    Mock::given(method("GET"))
+        .and(path(CLOUD_TASKS_LIST_PATH))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let home = TempDir::new().unwrap();
+    std::fs::write(
+        home.path().join("config.toml"),
+        "forced_chatgpt_workspace_id = \"account-allowed\"\n",
+    )
+    .unwrap();
+
+    let mut cmd = personal_access_token_cloud_list_command(&server, &home);
+    let output = run_cli_command(&mut cmd).unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "codex cloud list succeeded");
+    assert!(
+        stderr.contains("Not signed in."),
+        "unexpected stderr: {stderr}"
+    );
     server.verify().await;
 }
 
