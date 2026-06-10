@@ -171,11 +171,44 @@ fn should_start_plugin_mcp_oauth_for_install(
     auth: Option<&CodexAuth>,
     plugin_apps: &[codex_plugin::AppConnectorId],
 ) -> bool {
-    let app_route_available = !plugin_apps.is_empty()
-        && config
-            .features
-            .apps_enabled_for_auth(auth.is_some_and(CodexAuth::uses_codex_backend));
+    let app_route_available = plugin_app_route_available_for_install(config, auth, plugin_apps);
     !app_route_available
+}
+
+fn plugin_app_route_available_for_install(
+    config: &Config,
+    auth: Option<&CodexAuth>,
+    plugin_apps: &[codex_plugin::AppConnectorId],
+) -> bool {
+    if plugin_apps.is_empty() {
+        return false;
+    }
+
+    if !config
+        .features
+        .apps_enabled_for_auth(auth.is_some_and(CodexAuth::uses_codex_backend))
+    {
+        return false;
+    }
+
+    !connectors::connectors_for_plugin_apps(Vec::new(), plugin_apps).is_empty()
+}
+
+fn extend_plugin_apps(
+    plugin_apps: &mut Vec<codex_plugin::AppConnectorId>,
+    app_ids: impl IntoIterator<Item = String>,
+) {
+    let mut seen = plugin_apps
+        .iter()
+        .map(|app| app.0.clone())
+        .collect::<HashSet<_>>();
+    plugin_apps.extend(app_ids.into_iter().filter_map(|app_id| {
+        if seen.insert(app_id.clone()) {
+            Some(codex_plugin::AppConnectorId(app_id))
+        } else {
+            None
+        }
+    }));
 }
 
 fn filter_openai_curated_installed_conflicts(
@@ -1563,7 +1596,11 @@ impl PluginRequestProcessor {
         self.analytics_events_client
             .track_plugin_installed(plugin_metadata);
 
-        let plugin_apps = load_plugin_apps(result.installed_path.as_path()).await;
+        let mut plugin_apps = load_plugin_apps(result.installed_path.as_path()).await;
+        extend_plugin_apps(&mut plugin_apps, remote_detail.app_ids.clone());
+        if let Some(app_ids_needing_auth) = install_result.app_ids_needing_auth.as_ref() {
+            extend_plugin_apps(&mut plugin_apps, app_ids_needing_auth.clone());
+        }
         let plugin_mcp_servers = load_plugin_mcp_servers(result.installed_path.as_path()).await;
         if !plugin_mcp_servers.is_empty()
             && should_start_plugin_mcp_oauth_for_install(&config, auth.as_ref(), &plugin_apps)
