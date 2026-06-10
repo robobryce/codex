@@ -64,8 +64,12 @@ const RAW_SKILL_DESCRIPTION: &str = "Deploy\nthrough <hosted> backend.";
 const SKILL_DESCRIPTION: &str = "Deploy through &lt;hosted&gt; backend.";
 const SKILL_RESOURCE_URI: &str = "skill://plugin_demo/deploy";
 const SKILL_MAIN_PROMPT_URI: &str = "skill://plugin_demo/deploy/SKILL.md";
+const SKILL_REFERENCE_URI: &str = "skill://plugin_demo/deploy/references/deploy.md";
 const SKILL_MARKER: &str = "BACKEND_SKILL_BODY_MARKER";
 const SKILL_CONTENTS: &str = "---\nname: deploy\ndescription: Deploy through the hosted backend.\n---\n\n# Deploy\n\nBACKEND_SKILL_BODY_MARKER\n";
+const SKILL_REFERENCE_CONTENTS: &str = "# Deploy reference\n\nUse the hosted deployment API.\n";
+const SKILLS_LIST_CALL_ID: &str = "skills-list";
+const SKILLS_READ_CALL_ID: &str = "skills-read";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_apps_resources_support_backend_skills_without_an_environment() -> Result<()> {
@@ -128,13 +132,43 @@ stream_max_retries = 0
     let ThreadStartResponse { thread, .. } = to_response(thread_start_resp)?;
     let thread_id = thread.id;
 
-    let response_mock = responses::mount_sse_once(
+    let response_mock = responses::mount_sse_sequence(
         &responses_server,
-        responses::sse(vec![
-            responses::ev_response_created("resp-backend-skill"),
-            responses::ev_assistant_message("msg-backend-skill", "Done"),
-            responses::ev_completed("resp-backend-skill"),
-        ]),
+        vec![
+            responses::sse(vec![
+                responses::ev_response_created("resp-skills-list"),
+                responses::ev_function_call_with_namespace(
+                    SKILLS_LIST_CALL_ID,
+                    "skills",
+                    "list",
+                    "{}",
+                ),
+                responses::ev_completed("resp-skills-list"),
+            ]),
+            responses::sse(vec![
+                responses::ev_response_created("resp-skills-read"),
+                responses::ev_function_call_with_namespace(
+                    SKILLS_READ_CALL_ID,
+                    "skills",
+                    "read",
+                    &json!({
+                        "authority": {
+                            "kind": "remote",
+                            "id": "codex_apps",
+                        },
+                        "package": SKILL_RESOURCE_URI,
+                        "resource": SKILL_REFERENCE_URI,
+                    })
+                    .to_string(),
+                ),
+                responses::ev_completed("resp-skills-read"),
+            ]),
+            responses::sse(vec![
+                responses::ev_response_created("resp-backend-skill"),
+                responses::ev_assistant_message("msg-backend-skill", "Done"),
+                responses::ev_completed("resp-backend-skill"),
+            ]),
+        ],
     )
     .await;
     let turn_start_id = mcp
@@ -158,8 +192,14 @@ stream_max_retries = 0
     )
     .await??;
 
-    let request = response_mock.single_request();
-    let developer_messages = request.message_input_texts("developer");
+    let requests = response_mock.requests();
+    assert_eq!(requests.len(), 3);
+    let first_request = &requests[0];
+    assert!(first_request.tool_by_name("skills", "list").is_some());
+    assert!(first_request.tool_by_name("skills", "read").is_some());
+    assert!(first_request.tool_by_name("skills", "search").is_none());
+
+    let developer_messages = first_request.message_input_texts("developer");
     let catalog_line = format!("- {SKILL_NAME}: {SKILL_DESCRIPTION} (file: {SKILL_RESOURCE_URI})");
     assert_eq!(
         1,
@@ -173,7 +213,7 @@ stream_max_retries = 0
             .iter()
             .all(|text| !text.contains("ignored-plugin:ignored"))
     );
-    let skill_fragments = request
+    let skill_fragments = first_request
         .message_input_texts("user")
         .into_iter()
         .filter(|text| text.starts_with("<skill>"))
@@ -181,6 +221,41 @@ stream_max_retries = 0
     assert_eq!(1, skill_fragments.len());
     assert!(skill_fragments[0].contains(&format!("<name>{SKILL_NAME}</name>")));
     assert!(skill_fragments[0].contains(SKILL_MARKER));
+
+    let list_output = requests[1]
+        .function_call_output_text(SKILLS_LIST_CALL_ID)
+        .ok_or_else(|| anyhow::anyhow!("skills.list output should be sent to the model"))?;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&list_output)?,
+        json!({
+            "skills": [{
+                "authority": {
+                    "kind": "remote",
+                    "id": "codex_apps",
+                },
+                "package": SKILL_RESOURCE_URI,
+                "name": SKILL_NAME,
+                "description": SKILL_DESCRIPTION,
+                "main_resource": SKILL_MAIN_PROMPT_URI,
+            }],
+            "next_cursor": null,
+            "warnings": [],
+            "truncated": false,
+        })
+    );
+
+    let read_output = requests[2]
+        .function_call_output_text(SKILLS_READ_CALL_ID)
+        .ok_or_else(|| anyhow::anyhow!("skills.read output should be sent to the model"))?;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&read_output)?,
+        json!({
+            "resource": SKILL_REFERENCE_URI,
+            "contents": SKILL_REFERENCE_CONTENTS,
+            "next_cursor": null,
+            "truncated": false,
+        })
+    );
 
     let read_request_id = mcp
         .send_mcp_resource_read_request(McpResourceReadParams {
@@ -418,6 +493,16 @@ impl ServerHandler for ResourceAppsMcpServer {
                     uri: SKILL_MAIN_PROMPT_URI.to_string(),
                     mime_type: Some("text/markdown".to_string()),
                     text: SKILL_CONTENTS.to_string(),
+                    meta: None,
+                },
+            ]));
+        }
+        if uri == SKILL_REFERENCE_URI {
+            return Ok(ReadResourceResult::new(vec![
+                ResourceContents::TextResourceContents {
+                    uri: SKILL_REFERENCE_URI.to_string(),
+                    mime_type: Some("text/markdown".to_string()),
+                    text: SKILL_REFERENCE_CONTENTS.to_string(),
                     meta: None,
                 },
             ]));

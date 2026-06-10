@@ -14,6 +14,9 @@ use codex_extension_api::ExtensionRegistryBuilder;
 use codex_extension_api::PromptFragment;
 use codex_extension_api::ThreadLifecycleContributor;
 use codex_extension_api::ThreadStartInput;
+use codex_extension_api::ToolCall;
+use codex_extension_api::ToolContributor;
+use codex_extension_api::ToolExecutor;
 use codex_extension_api::TurnInputContext;
 use codex_extension_api::TurnInputContributor;
 use codex_mcp::McpResourceClient;
@@ -38,6 +41,7 @@ use crate::sources::SkillProviders;
 use crate::state::SkillsExtensionConfig;
 use crate::state::SkillsThreadState;
 use crate::state::SkillsTurnState;
+use crate::tools::skill_tools;
 
 #[derive(Clone)]
 struct SkillsExtension {
@@ -111,6 +115,23 @@ impl ContextContributor for SkillsExtension {
                 .into_iter()
                 .collect()
         })
+    }
+}
+
+impl ToolContributor for SkillsExtension {
+    fn tools(
+        &self,
+        session_store: &ExtensionData,
+        _thread_store: &ExtensionData,
+    ) -> Vec<Arc<dyn ToolExecutor<ToolCall>>> {
+        if !self.providers.has_remote_provider() {
+            return Vec::new();
+        }
+
+        skill_tools(
+            self.providers.clone(),
+            session_store.get::<McpResourceClient>(),
+        )
     }
 }
 
@@ -270,5 +291,6 @@ pub fn install_with_providers(
     registry.thread_lifecycle_contributor(extension.clone());
     registry.config_contributor(extension.clone());
     registry.prompt_contributor(extension.clone());
-    registry.turn_input_contributor(extension);
+    registry.turn_input_contributor(extension.clone());
+    registry.tool_contributor(extension);
 }
