@@ -250,13 +250,10 @@ impl SkillsExtension {
 
         let mut catalog = self.providers.list_for_turn(query).await;
         if include_remote_skills {
-            match thread_state
+            let remote_catalog = thread_state
                 .remote_catalog_snapshot(self.providers.list_remote_for_turn(remote_query))
-                .await
-            {
-                Ok(remote_catalog) => catalog.extend(remote_catalog),
-                Err(err) => catalog.warnings.push(err.message),
-            }
+                .await;
+            catalog.extend(remote_catalog);
         }
         catalog
     }

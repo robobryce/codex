@@ -63,11 +63,16 @@ impl SkillsThreadState {
     pub(crate) async fn remote_catalog_snapshot(
         &self,
         initialize: impl Future<Output = Result<SkillCatalog, SkillProviderError>> + Send,
-    ) -> Result<SkillCatalog, SkillProviderError> {
+    ) -> SkillCatalog {
         self.remote_catalog
-            .get_or_try_init(|| initialize)
+            .get_or_init(|| async {
+                initialize.await.unwrap_or_else(|err| SkillCatalog {
+                    warnings: vec![err.message],
+                    ..Default::default()
+                })
+            })
             .await
-            .cloned()
+            .clone()
     }
 }
 

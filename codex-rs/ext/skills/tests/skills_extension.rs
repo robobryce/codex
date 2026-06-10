@@ -243,7 +243,7 @@ async fn selected_executor_catalog_is_context_and_selected_entrypoint_is_turn_in
 }
 
 #[tokio::test]
-async fn remote_catalog_snapshot_retries_failure_then_is_reused() -> TestResult {
+async fn remote_catalog_snapshot_caches_failure() -> TestResult {
     let list_calls = Arc::new(AtomicUsize::new(0));
     let providers = SkillProviders::new().with_remote_provider(Arc::new(StaticSkillProvider {
         catalog: SkillCatalog {
@@ -297,10 +297,9 @@ async fn remote_catalog_snapshot_retries_failure_then_is_reused() -> TestResult 
                 &ExtensionData::new(turn_id),
             )
             .await;
-        assert_eq!(1, fragments.len());
-        assert!(fragments[0].render().contains("<name>first</name>"));
+        assert!(fragments.is_empty());
     }
-    assert_eq!(2, list_calls.load(Ordering::Relaxed));
+    assert_eq!(1, list_calls.load(Ordering::Relaxed));
 
     Ok(())
 }
