@@ -6,6 +6,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::info;
+use tracing::instrument;
 use tracing::warn;
 
 use crate::client::ModelClientSession;
@@ -52,6 +53,7 @@ impl SessionStartupPrewarmHandle {
         let _ = self.task.await;
     }
 
+    #[instrument(name = "startup_prewarm.resolve", level = "trace", skip_all)]
     async fn resolve(
         self,
         session_telemetry: &SessionTelemetry,
@@ -210,6 +212,11 @@ impl Session {
         .await;
     }
 
+    #[instrument(
+        name = "startup_prewarm.consume_for_regular_turn",
+        level = "trace",
+        skip_all
+    )]
     pub(crate) async fn consume_startup_prewarm_for_regular_turn(
         &self,
         cancellation_token: &CancellationToken,

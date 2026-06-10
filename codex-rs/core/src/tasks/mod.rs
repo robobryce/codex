@@ -19,6 +19,7 @@ use tracing::Span;
 use tracing::field;
 use tracing::info_span;
 use tracing::trace;
+use tracing::trace_span;
 use tracing::warn;
 
 use crate::codex_thread::BackgroundTerminalInfo;
@@ -400,9 +401,14 @@ impl Session {
                         task_input,
                         task_cancellation_token.child_token(),
                     )
+                    .instrument(trace_span!("session_task.run"))
                     .await;
                 let sess = session_ctx.clone_session();
-                if let Err(err) = sess.flush_rollout().await {
+                if let Err(err) = sess
+                    .flush_rollout()
+                    .instrument(trace_span!("session_task.flush_rollout"))
+                    .await
+                {
                     warn!("failed to flush rollout before completing turn: {err}");
                     sess.send_event(
                         ctx_for_finish.as_ref(),
