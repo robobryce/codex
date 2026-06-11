@@ -1801,27 +1801,6 @@ async fn mount_remote_plugin_detail_with_status_and_app_manifest(
     status: PluginAvailability,
     app_manifest: Option<serde_json::Value>,
 ) {
-    mount_remote_plugin_detail_with_status_app_manifest_and_app_ids(
-        server,
-        remote_plugin_id,
-        release_version,
-        bundle_download_url,
-        status,
-        app_manifest,
-        &[],
-    )
-    .await;
-}
-
-async fn mount_remote_plugin_detail_with_status_app_manifest_and_app_ids(
-    server: &MockServer,
-    remote_plugin_id: &str,
-    release_version: &str,
-    bundle_download_url: Option<&str>,
-    status: PluginAvailability,
-    app_manifest: Option<serde_json::Value>,
-    app_ids: &[&str],
-) {
     let status = match status {
         PluginAvailability::Available => "ENABLED",
         PluginAvailability::DisabledByAdmin => "DISABLED_BY_ADMIN",
@@ -1832,7 +1811,6 @@ async fn mount_remote_plugin_detail_with_status_app_manifest_and_app_ids(
     let app_manifest_field = app_manifest
         .map(|manifest| format!(r#"    "app_manifest": {manifest},"#))
         .unwrap_or_default();
-    let app_ids = serde_json::json!(app_ids);
     let detail_body = format!(
         r#"{{
   "id": "{remote_plugin_id}",
@@ -1846,7 +1824,7 @@ async fn mount_remote_plugin_detail_with_status_app_manifest_and_app_ids(
 {bundle_download_url_field}
     "display_name": "Linear",
     "description": "Track work in Linear",
-    "app_ids": {app_ids},
+    "app_ids": [],
 {app_manifest_field}
     "interface": {{
       "short_description": "Plan and track work"
