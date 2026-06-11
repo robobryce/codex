@@ -31,8 +31,11 @@ env:
 jobs:
   build-and-release:
     name: build + publish codex binary
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
+    # Pin to 22.04 (glibc 2.35) rather than ubuntu-latest (24.04 / glibc 2.38)
+    # so the published binary also runs on older-glibc hosts (Ubuntu 22.04,
+    # Debian 12, etc.) instead of requiring GLIBC_2.38.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
     permissions:
       contents: write # needed to create a GitHub Release
     defaults:
