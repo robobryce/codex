@@ -98,6 +98,7 @@ def validate_manifest_shape(
         "version",
         "description",
         "skills",
+        "agents",
         "apps",
         "mcpServers",
         "interface",
@@ -125,6 +126,7 @@ def validate_manifest_shape(
         validate_optional_https_url(author, "url", errors, prefix="author")
 
     validate_optional_contract_path(manifest, "skills", "skills", errors)
+    validate_optional_contract_path(manifest, "agents", "agents", errors)
     validate_optional_contract_path(manifest, "apps", ".app.json", errors)
     validate_optional_contract_path(manifest, "mcpServers", ".mcp.json", errors)
 

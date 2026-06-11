@@ -582,3 +582,86 @@ fn materialize_git_subdir_uses_sparse_checkout() {
     assert!(!checkout_root.join("root.txt").exists());
     assert!(!checkout_root.join("plugins/other/marker.txt").exists());
 }
+
+#[test]
+fn plugin_agent_roots_are_empty_without_agents_dir_or_manifest_entry() {
+    let (_tmp, plugin_root) = plugin_root();
+    write_manifest(&plugin_root, r#"{ "name": "demo-plugin" }"#);
+    let manifest = load_plugin_manifest(plugin_root.as_path()).expect("manifest");
+
+    assert!(manifest.paths.agents.is_none());
+    assert_eq!(
+        plugin_agent_roots(&plugin_root, &manifest.paths),
+        Vec::new()
+    );
+}
+
+#[test]
+fn plugin_agent_roots_discovers_default_agents_dir() {
+    let (_tmp, plugin_root) = plugin_root();
+    write_manifest(&plugin_root, r#"{ "name": "demo-plugin" }"#);
+    fs::create_dir_all(plugin_root.join("agents")).expect("create agents dir");
+    let manifest = load_plugin_manifest(plugin_root.as_path()).expect("manifest");
+
+    assert_eq!(
+        plugin_agent_roots(&plugin_root, &manifest.paths),
+        vec![plugin_root.join("agents")]
+    );
+}
+
+#[test]
+fn plugin_agent_roots_includes_manifest_path_in_addition_to_default() {
+    let (_tmp, plugin_root) = plugin_root();
+    write_manifest(
+        &plugin_root,
+        r#"{ "name": "demo-plugin", "agents": "./custom-agents" }"#,
+    );
+    fs::create_dir_all(plugin_root.join("agents")).expect("create default agents dir");
+    fs::create_dir_all(plugin_root.join("custom-agents")).expect("create custom agents dir");
+    let manifest = load_plugin_manifest(plugin_root.as_path()).expect("manifest");
+
+    assert_eq!(
+        manifest.paths.agents.as_ref(),
+        Some(&plugin_root.join("custom-agents"))
+    );
+    assert_eq!(
+        plugin_agent_roots(&plugin_root, &manifest.paths),
+        vec![
+            plugin_root.join("agents"),
+            plugin_root.join("custom-agents")
+        ]
+    );
+}
+
+#[test]
+fn plugin_agent_roots_dedupes_manifest_path_matching_default() {
+    let (_tmp, plugin_root) = plugin_root();
+    write_manifest(
+        &plugin_root,
+        r#"{ "name": "demo-plugin", "agents": "./agents" }"#,
+    );
+    fs::create_dir_all(plugin_root.join("agents")).expect("create agents dir");
+    let manifest = load_plugin_manifest(plugin_root.as_path()).expect("manifest");
+
+    assert_eq!(
+        plugin_agent_roots(&plugin_root, &manifest.paths),
+        vec![plugin_root.join("agents")]
+    );
+}
+
+#[test]
+fn plugin_manifest_rejects_agents_path_escaping_plugin_root() {
+    let (_tmp, plugin_root) = plugin_root();
+    write_manifest(
+        &plugin_root,
+        r#"{ "name": "demo-plugin", "agents": "../escape" }"#,
+    );
+    let manifest = load_plugin_manifest(plugin_root.as_path()).expect("manifest");
+
+    // A path outside the plugin root is ignored, leaving only default discovery (none here).
+    assert!(manifest.paths.agents.is_none());
+    assert_eq!(
+        plugin_agent_roots(&plugin_root, &manifest.paths),
+        Vec::new()
+    );
+}

@@ -251,6 +251,7 @@ async fn load_plugins_loads_default_skills_and_mcp_servers() {
             skill_roots: vec![plugin_root.join("skills").abs()],
             disabled_skill_paths: HashSet::new(),
             has_enabled_skills: true,
+            agent_roots: Vec::new(),
             mcp_servers: HashMap::from([(
                 "sample".to_string(),
                 McpServerConfig {
@@ -1097,6 +1098,7 @@ async fn load_plugins_preserves_disabled_plugins_without_effective_contributions
             skill_roots: Vec::new(),
             disabled_skill_paths: HashSet::new(),
             has_enabled_skills: false,
+            agent_roots: Vec::new(),
             mcp_servers: HashMap::new(),
             apps: Vec::new(),
             hook_sources: Vec::new(),
@@ -1261,6 +1263,7 @@ fn capability_index_filters_inactive_and_zero_capability_plugins() {
         skill_roots: Vec::new(),
         disabled_skill_paths: HashSet::new(),
         has_enabled_skills: false,
+        agent_roots: Vec::new(),
         mcp_servers: HashMap::new(),
         apps: Vec::new(),
         hook_sources: Vec::new(),

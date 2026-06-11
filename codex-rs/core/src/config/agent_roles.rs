@@ -548,3 +548,278 @@ async fn collect_agent_role_files(
     files.sort();
     Ok(files)
 }
+
+/// Agent role names that are always provided by Codex itself. Plugin-bundled roles may not
+/// shadow these, so a plugin cannot redefine the behavior of `default`, `explorer`, etc.
+const BUILT_IN_AGENT_ROLE_NAMES: &[&str] = &["default", "explorer", "worker", "awaiter"];
+
+/// Discovers agent roles bundled inside installed plugins.
+///
+/// `agent_roots` are the per-plugin `agents/` directories surfaced by the plugin loader
+/// (see `PluginLoadOutcome::effective_plugin_agent_roots`). Each `*.toml` under those
+/// directories is parsed with the same machinery used for user/project agent files.
+///
+/// Precedence is intentionally low: a plugin role is dropped when its name collides with a
+/// built-in role or with a role already declared via `config.toml`/`.codex/agents` (passed in
+/// `existing_role_names`). Collisions between two plugins are resolved by first writer wins,
+/// using the sorted, deduplicated `agent_roots` ordering for determinism. Malformed files are
+/// skipped with a warning rather than failing the load.
+pub(crate) async fn load_plugin_agent_roles(
+    fs: &dyn ExecutorFileSystem,
+    agent_roots: &[AbsolutePathBuf],
+    existing_role_names: &BTreeSet<String>,
+    startup_warnings: &mut Vec<String>,
+) -> BTreeMap<String, AgentRoleConfig> {
+    let mut roles: BTreeMap<String, AgentRoleConfig> = BTreeMap::new();
+    let no_declared_files = BTreeSet::new();
+
+    for agent_root in agent_roots {
+        let discovered =
+            match discover_agent_roles_in_dir(fs, agent_root, &no_declared_files, startup_warnings)
+                .await
+            {
+                Ok(discovered) => discovered,
+                Err(err) => {
+                    push_agent_role_warning(startup_warnings, err);
+                    continue;
+                }
+            };
+
+        for (role_name, role) in discovered {
+            if BUILT_IN_AGENT_ROLE_NAMES.contains(&role_name.as_str())
+                || existing_role_names.contains(&role_name)
+            {
+                push_agent_role_warning(
+                    startup_warnings,
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "ignoring plugin agent role `{role_name}` from {} because a built-in or configured role already uses that name",
+                            agent_root.as_path().display()
+                        ),
+                    ),
+                );
+                continue;
+            }
+            if roles.contains_key(&role_name) {
+                push_agent_role_warning(
+                    startup_warnings,
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "ignoring duplicate plugin agent role `{role_name}` discovered in {}",
+                            agent_root.as_path().display()
+                        ),
+                    ),
+                );
+                continue;
+            }
+            roles.insert(role_name, role);
+        }
+    }
+
+    roles
+}
+
+#[cfg(test)]
+mod plugin_agent_role_tests {
+    use super::*;
+    use codex_exec_server::LOCAL_FS;
+    use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
+
+    fn agent_root(dir: &std::path::Path) -> AbsolutePathBuf {
+        AbsolutePathBuf::try_from(dir.to_path_buf()).expect("agents dir should be absolute")
+    }
+
+    fn write_role_file(dir: &std::path::Path, file_name: &str, contents: &str) {
+        std::fs::create_dir_all(dir).expect("create agents dir");
+        std::fs::write(dir.join(file_name), contents).expect("write role file");
+    }
+
+    const VALID_ROLE: &str = r#"
+name = "researcher"
+description = "Research-focused plugin role."
+developer_instructions = "Investigate thoroughly."
+model = "gpt-5.2"
+"#;
+
+    #[tokio::test]
+    async fn discovers_plugin_agent_role_from_default_dir() {
+        let tmp = TempDir::new().expect("tempdir");
+        let agents_dir = tmp.path().join("agents");
+        write_role_file(&agents_dir, "researcher.toml", VALID_ROLE);
+
+        let mut warnings = Vec::new();
+        let roles = load_plugin_agent_roles(
+            LOCAL_FS.as_ref(),
+            &[agent_root(&agents_dir)],
+            &BTreeSet::new(),
+            &mut warnings,
+        )
+        .await;
+
+        assert_eq!(warnings, Vec::<String>::new());
+        let role = roles.get("researcher").expect("researcher role discovered");
+        assert_eq!(
+            role.description.as_deref(),
+            Some("Research-focused plugin role.")
+        );
+        assert_eq!(
+            role.config_file.as_deref(),
+            Some(agents_dir.join("researcher.toml").as_path())
+        );
+    }
+
+    #[tokio::test]
+    async fn skips_plugin_role_colliding_with_built_in() {
+        let tmp = TempDir::new().expect("tempdir");
+        let agents_dir = tmp.path().join("agents");
+        write_role_file(
+            &agents_dir,
+            "explorer.toml",
+            r#"
+name = "explorer"
+description = "Plugin attempt to override explorer."
+developer_instructions = "Should not apply."
+"#,
+        );
+
+        let mut warnings = Vec::new();
+        let roles = load_plugin_agent_roles(
+            LOCAL_FS.as_ref(),
+            &[agent_root(&agents_dir)],
+            &BTreeSet::new(),
+            &mut warnings,
+        )
+        .await;
+
+        assert!(
+            roles.is_empty(),
+            "built-in role name must not be overridden"
+        );
+        assert!(
+            warnings.iter().any(|w| w.contains("explorer")),
+            "expected a warning about the built-in collision, got {warnings:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn skips_plugin_role_colliding_with_configured_role() {
+        let tmp = TempDir::new().expect("tempdir");
+        let agents_dir = tmp.path().join("agents");
+        write_role_file(&agents_dir, "researcher.toml", VALID_ROLE);
+
+        let existing: BTreeSet<String> = ["researcher".to_string()].into_iter().collect();
+        let mut warnings = Vec::new();
+        let roles = load_plugin_agent_roles(
+            LOCAL_FS.as_ref(),
+            &[agent_root(&agents_dir)],
+            &existing,
+            &mut warnings,
+        )
+        .await;
+
+        assert!(
+            roles.is_empty(),
+            "configured role must take precedence over a plugin role"
+        );
+        assert!(warnings.iter().any(|w| w.contains("researcher")));
+    }
+
+    #[tokio::test]
+    async fn first_plugin_wins_on_cross_plugin_collision() {
+        let tmp = TempDir::new().expect("tempdir");
+        let first_dir = tmp.path().join("first/agents");
+        let second_dir = tmp.path().join("second/agents");
+        write_role_file(&first_dir, "researcher.toml", VALID_ROLE);
+        write_role_file(
+            &second_dir,
+            "researcher.toml",
+            r#"
+name = "researcher"
+description = "Second plugin's researcher."
+developer_instructions = "Different instructions."
+"#,
+        );
+
+        // Pass roots in a fixed order; the first occurrence should win.
+        let mut warnings = Vec::new();
+        let roles = load_plugin_agent_roles(
+            LOCAL_FS.as_ref(),
+            &[agent_root(&first_dir), agent_root(&second_dir)],
+            &BTreeSet::new(),
+            &mut warnings,
+        )
+        .await;
+
+        let role = roles.get("researcher").expect("researcher role discovered");
+        assert_eq!(
+            role.description.as_deref(),
+            Some("Research-focused plugin role.")
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("duplicate plugin agent role")),
+            "expected a duplicate warning, got {warnings:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_role_file_is_skipped_with_warning() {
+        let tmp = TempDir::new().expect("tempdir");
+        let agents_dir = tmp.path().join("agents");
+        // Missing required `developer_instructions` for a discovered (non-config) role.
+        write_role_file(
+            &agents_dir,
+            "broken.toml",
+            r#"
+name = "broken"
+description = "Missing developer instructions."
+"#,
+        );
+        write_role_file(&agents_dir, "researcher.toml", VALID_ROLE);
+
+        let mut warnings = Vec::new();
+        let roles = load_plugin_agent_roles(
+            LOCAL_FS.as_ref(),
+            &[agent_root(&agents_dir)],
+            &BTreeSet::new(),
+            &mut warnings,
+        )
+        .await;
+
+        assert!(roles.contains_key("researcher"));
+        assert!(!roles.contains_key("broken"));
+        assert!(!warnings.is_empty(), "malformed file should warn");
+    }
+
+    #[tokio::test]
+    async fn missing_agents_dir_is_tolerated() {
+        let tmp = TempDir::new().expect("tempdir");
+        let agents_dir = tmp.path().join("does-not-exist");
+
+        let mut warnings = Vec::new();
+        let roles = load_plugin_agent_roles(
+            LOCAL_FS.as_ref(),
+            &[agent_root(&agents_dir)],
+            &BTreeSet::new(),
+            &mut warnings,
+        )
+        .await;
+
+        assert!(roles.is_empty());
+        assert_eq!(warnings, Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn empty_agent_roots_returns_no_roles() {
+        let mut warnings = Vec::new();
+        let roles =
+            load_plugin_agent_roles(LOCAL_FS.as_ref(), &[], &BTreeSet::new(), &mut warnings).await;
+
+        assert!(roles.is_empty());
+        assert_eq!(warnings, Vec::<String>::new());
+    }
+}

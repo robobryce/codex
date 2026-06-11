@@ -15,6 +15,7 @@
   "license": "MIT",
   "keywords": ["keyword1", "keyword2"],
   "skills": "./skills/",
+  "agents": "./agents/",
   "hooks": "./hooks.json",
   "mcpServers": "./.mcp.json",
   "apps": "./.app.json",
@@ -61,6 +62,7 @@
 - `license` (`string`): License identifier (for example `MIT`, `Apache-2.0`).
 - `keywords` (`array` of `string`): Search/discovery tags.
 - `skills` (`string`): Relative path to skill directories/files.
+- `agents` (`string`): Relative path to a directory of agent role definitions (`*.toml`). Each file defines one custom subagent role (`name`, `description`, `developer_instructions`, and optional overrides such as `model`). Discovered roles become available to spawn while the plugin is enabled. Plugin roles cannot shadow built-in roles (`default`, `explorer`, `worker`) or roles already declared in `config.toml` / `.codex/agents`.
 - `hooks` (`string`): Hook config path.
 - `mcpServers` (`string`): MCP config path.
 - `apps` (`string`): App manifest path for plugin integrations.
@@ -91,7 +93,7 @@
 ### Path conventions and defaults
 
 - Path values should be relative and begin with `./`.
-- `skills`, `hooks`, and `mcpServers` are supplemented on top of default component discovery; they do not replace defaults.
+- `skills`, `agents`, `hooks`, and `mcpServers` are supplemented on top of default component discovery; they do not replace defaults. Agent roles are also discovered from a default `./agents/` directory when `agents` is omitted.
 - Custom path values must follow the plugin root convention and naming/namespacing rules.
 - This repo’s scaffold writes `.codex-plugin/plugin.json`; treat that as the manifest location this skill generates.
 

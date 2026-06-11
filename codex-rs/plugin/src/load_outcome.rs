@@ -21,6 +21,10 @@ pub struct LoadedPlugin<M> {
     pub skill_roots: Vec<AbsolutePathBuf>,
     pub disabled_skill_paths: HashSet<AbsolutePathBuf>,
     pub has_enabled_skills: bool,
+    /// Directories containing plugin-bundled agent role definitions (`*.toml`).
+    /// Kept as opaque paths here so this crate stays independent of the agent-role
+    /// parser that lives in `codex-core`; the core resolves them at spawn time.
+    pub agent_roots: Vec<AbsolutePathBuf>,
     pub mcp_servers: HashMap<String, M>,
     pub apps: Vec<AppConnectorId>,
     pub hook_sources: Vec<PluginHookSource>,
@@ -115,6 +119,20 @@ impl<M: Clone> PluginLoadOutcome<M> {
         skill_roots.sort_unstable();
         skill_roots.dedup();
         skill_roots
+    }
+
+    /// Deduplicated, ordered directories that may hold plugin-bundled agent role
+    /// definitions, gathered across every active plugin.
+    pub fn effective_plugin_agent_roots(&self) -> Vec<AbsolutePathBuf> {
+        let mut agent_roots: Vec<AbsolutePathBuf> = self
+            .plugins
+            .iter()
+            .filter(|plugin| plugin.is_active())
+            .flat_map(|plugin| plugin.agent_roots.iter().cloned())
+            .collect();
+        agent_roots.sort_unstable();
+        agent_roots.dedup();
+        agent_roots
     }
 
     pub fn effective_plugin_skill_roots(&self) -> Vec<PluginSkillRoot> {
@@ -225,12 +243,41 @@ mod tests {
             skill_roots,
             disabled_skill_paths: HashSet::new(),
             has_enabled_skills: true,
+            agent_roots: Vec::new(),
             mcp_servers: HashMap::new(),
             apps: Vec::new(),
             hook_sources: Vec::new(),
             hook_load_warnings: Vec::new(),
             error: None,
         }
+    }
+
+    #[test]
+    fn effective_plugin_agent_roots_dedupes_and_skips_inactive_plugins() {
+        let shared_root = test_path("shared-agents");
+        let unique_root = test_path("unique-agents");
+        let disabled_root = test_path("disabled-agents");
+        let errored_root = test_path("errored-agents");
+
+        let mut active = loaded_plugin("active@test", Vec::new());
+        active.agent_roots = vec![shared_root.clone(), unique_root.clone()];
+
+        let mut also_active = loaded_plugin("other@test", Vec::new());
+        also_active.agent_roots = vec![shared_root.clone()];
+
+        let mut disabled = loaded_plugin("disabled@test", Vec::new());
+        disabled.enabled = false;
+        disabled.agent_roots = vec![disabled_root];
+
+        let mut errored = loaded_plugin("errored@test", Vec::new());
+        errored.error = Some("boom".to_string());
+        errored.agent_roots = vec![errored_root];
+
+        let outcome = PluginLoadOutcome::from_plugins(vec![active, also_active, disabled, errored]);
+
+        let mut expected = vec![shared_root, unique_root];
+        expected.sort_unstable();
+        assert_eq!(outcome.effective_plugin_agent_roots(), expected);
     }
 
     #[test]

@@ -212,6 +212,103 @@ async fn apply_role_preserves_unspecified_keys() {
     );
 }
 
+/// End-to-end: a role bundled in a plugin `agents/` directory is discovered, merged into
+/// `config.agent_roles`, and then applied at spawn time with its locked overrides intact —
+/// exactly as a user/project role would be.
+#[tokio::test]
+async fn plugin_bundled_agent_role_is_discovered_merged_and_applied() {
+    use crate::session::turn_context::merge_plugin_agent_roles_into_config;
+    use codex_utils_absolute_path::AbsolutePathBuf;
+
+    let (home, mut config) = test_config_with_cli_overrides(vec![(
+        "model".to_string(),
+        TomlValue::String("base-model".to_string()),
+    )])
+    .await;
+
+    let agents_dir = home.path().join("plugin").join("agents");
+    fs::create_dir_all(&agents_dir).expect("create plugin agents dir");
+    fs::write(
+        agents_dir.join("researcher.toml"),
+        r#"
+name = "researcher"
+description = "Plugin-provided research role."
+developer_instructions = "Investigate thoroughly."
+model = "plugin-role-model"
+"#,
+    )
+    .expect("write plugin role file");
+
+    let agent_root = AbsolutePathBuf::try_from(agents_dir).expect("agents dir is absolute");
+    merge_plugin_agent_roles_into_config(&mut config, vec![agent_root]).await;
+
+    // The plugin role is now visible to the spawn-tool advertisement.
+    let role = config
+        .agent_roles
+        .get("researcher")
+        .expect("plugin role should be merged into config");
+    assert_eq!(
+        role.description.as_deref(),
+        Some("Plugin-provided research role.")
+    );
+
+    // Applying it at spawn time installs the role's locked model override.
+    apply_role_to_config(&mut config, Some("researcher"))
+        .await
+        .expect("plugin role should apply");
+    assert_eq!(config.model.as_deref(), Some("plugin-role-model"));
+}
+
+/// A plugin role must not override a role already declared via `config.toml`/`.codex/agents`.
+#[tokio::test]
+async fn plugin_bundled_agent_role_does_not_override_configured_role() {
+    use crate::session::turn_context::merge_plugin_agent_roles_into_config;
+    use codex_utils_absolute_path::AbsolutePathBuf;
+
+    let (home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
+
+    // A pre-existing configured role with the same name the plugin will try to use.
+    let configured_path = write_role_config(
+        &home,
+        "configured-researcher.toml",
+        "name = \"researcher\"\ndescription = \"Configured researcher.\"\ndeveloper_instructions = \"Configured.\"\nmodel = \"configured-model\"",
+    )
+    .await;
+    config.agent_roles.insert(
+        "researcher".to_string(),
+        AgentRoleConfig {
+            description: Some("Configured researcher.".to_string()),
+            config_file: Some(configured_path),
+            nickname_candidates: None,
+        },
+    );
+
+    let agents_dir = home.path().join("plugin").join("agents");
+    fs::create_dir_all(&agents_dir).expect("create plugin agents dir");
+    fs::write(
+        agents_dir.join("researcher.toml"),
+        r#"
+name = "researcher"
+description = "Plugin researcher that should be ignored."
+developer_instructions = "Should not win."
+model = "plugin-model"
+"#,
+    )
+    .expect("write plugin role file");
+
+    let agent_root = AbsolutePathBuf::try_from(agents_dir).expect("agents dir is absolute");
+    merge_plugin_agent_roles_into_config(&mut config, vec![agent_root]).await;
+
+    apply_role_to_config(&mut config, Some("researcher"))
+        .await
+        .expect("configured role should apply");
+    assert_eq!(
+        config.model.as_deref(),
+        Some("configured-model"),
+        "configured role must win over a plugin role with the same name"
+    );
+}
+
 #[tokio::test]
 async fn apply_role_reports_explicit_service_tier() {
     let (home, mut config) = test_config_with_cli_overrides(Vec::new()).await;

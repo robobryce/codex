@@ -48,6 +48,7 @@ use tempfile::TempDir;
 use tracing::warn;
 
 const DEFAULT_SKILLS_DIR_NAME: &str = "skills";
+const DEFAULT_AGENTS_DIR_NAME: &str = "agents";
 const DEFAULT_HOOKS_CONFIG_FILE: &str = "hooks/hooks.json";
 const DEFAULT_MCP_CONFIG_FILE: &str = ".mcp.json";
 const DEFAULT_APP_CONFIG_FILE: &str = ".app.json";
@@ -637,6 +638,7 @@ async fn load_plugin(
         skill_roots: Vec::new(),
         disabled_skill_paths: HashSet::new(),
         has_enabled_skills: false,
+        agent_roots: Vec::new(),
         mcp_servers: HashMap::new(),
         apps: Vec::new(),
         hook_sources: Vec::new(),
@@ -688,6 +690,7 @@ async fn load_plugin(
                 .or_else(|| Some(manifest.name.clone()));
             loaded_plugin.manifest_description = manifest.description.clone();
             loaded_plugin.skill_roots = plugin_skill_roots(&plugin_root, manifest_paths);
+            loaded_plugin.agent_roots = plugin_agent_roots(&plugin_root, manifest_paths);
             let resolved_skills = load_plugin_skills(
                 &plugin_root,
                 &loaded_plugin_id,
@@ -819,6 +822,30 @@ fn default_skill_roots(plugin_root: &AbsolutePathBuf) -> Vec<AbsolutePathBuf> {
     let skills_dir = plugin_root.join(DEFAULT_SKILLS_DIR_NAME);
     if skills_dir.is_dir() {
         vec![skills_dir]
+    } else {
+        Vec::new()
+    }
+}
+
+/// Resolves the directories that may hold plugin-bundled agent role definitions:
+/// the default `agents/` directory plus any manifest-declared `agents` path.
+pub fn plugin_agent_roots(
+    plugin_root: &AbsolutePathBuf,
+    manifest_paths: &PluginManifestPaths,
+) -> Vec<AbsolutePathBuf> {
+    let mut paths = default_agent_roots(plugin_root);
+    if let Some(path) = &manifest_paths.agents {
+        paths.push(path.clone());
+    }
+    paths.sort_unstable();
+    paths.dedup();
+    paths
+}
+
+fn default_agent_roots(plugin_root: &AbsolutePathBuf) -> Vec<AbsolutePathBuf> {
+    let agents_dir = plugin_root.join(DEFAULT_AGENTS_DIR_NAME);
+    if agents_dir.is_dir() {
+        vec![agents_dir]
     } else {
         Vec::new()
     }

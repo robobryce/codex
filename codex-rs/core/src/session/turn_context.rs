@@ -726,7 +726,7 @@ impl Session {
             .as_ref()
             .map(|turn_environment| turn_environment.cwd.clone())
             .unwrap_or_else(|| session_configuration.cwd().clone());
-        let per_turn_config = Self::build_per_turn_config(&session_configuration, cwd.clone());
+        let mut per_turn_config = Self::build_per_turn_config(&session_configuration, cwd.clone());
         {
             let mcp_connection_manager = self.services.mcp_connection_manager.load_full();
             mcp_connection_manager.set_approval_policy(&session_configuration.approval_policy);
@@ -759,6 +759,11 @@ impl Session {
             .await;
         let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
         let skills_input = skills_load_input_from_config(&per_turn_config, effective_skill_roots);
+        merge_plugin_agent_roles_into_config(
+            &mut per_turn_config,
+            plugin_outcome.effective_plugin_agent_roots(),
+        )
+        .await;
         let fs = primary_turn_environment
             .map(|turn_environment| turn_environment.environment.get_filesystem());
         let skills_outcome = Arc::new(
@@ -874,5 +879,42 @@ impl Session {
                 }
             };
         (session_configuration, turn_environments)
+    }
+}
+
+/// Merges agent roles bundled inside installed plugins into `config.agent_roles`.
+///
+/// Plugin roles are added at the lowest precedence: any role already present (built-in roles
+/// resolved at spawn time, or roles declared via `config.toml`/`.codex/agents`) is preserved.
+/// This keeps the discovery seam identical to plugin-bundled skills — both are resolved per turn
+/// from the active plugin set — while reusing the same agent-role parser used for on-disk roles.
+/// Plugin role files live on local disk, so they are always read through `LOCAL_FS`.
+pub(crate) async fn merge_plugin_agent_roles_into_config(
+    config: &mut Config,
+    agent_roots: Vec<codex_utils_absolute_path::AbsolutePathBuf>,
+) {
+    if agent_roots.is_empty() {
+        return;
+    }
+
+    let existing_role_names: std::collections::BTreeSet<String> =
+        config.agent_roles.keys().cloned().collect();
+    let mut warnings = Vec::new();
+    let plugin_roles = crate::config::agent_roles::load_plugin_agent_roles(
+        codex_exec_server::LOCAL_FS.as_ref(),
+        &agent_roots,
+        &existing_role_names,
+        &mut warnings,
+    )
+    .await;
+
+    for warning in warnings {
+        warn!("{warning}");
+    }
+
+    for (role_name, role) in plugin_roles {
+        // `existing_role_names` already excluded configured roles, so this only inserts
+        // genuinely new plugin roles and never clobbers user/project configuration.
+        config.agent_roles.entry(role_name).or_insert(role);
     }
 }

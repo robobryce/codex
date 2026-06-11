@@ -25,6 +25,8 @@ struct RawPluginManifest {
     #[serde(default)]
     skills: Option<RawPluginManifestPath>,
     #[serde(default)]
+    agents: Option<RawPluginManifestPath>,
+    #[serde(default)]
     mcp_servers: Option<String>,
     #[serde(default)]
     apps: Option<String>,
@@ -47,6 +49,7 @@ pub struct PluginManifest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginManifestPaths {
     pub skills: Option<AbsolutePathBuf>,
+    pub agents: Option<AbsolutePathBuf>,
     pub mcp_servers: Option<AbsolutePathBuf>,
     pub apps: Option<AbsolutePathBuf>,
     pub hooks: Option<PluginManifestHooks>,
@@ -155,6 +158,7 @@ pub fn load_plugin_manifest(plugin_root: &Path) -> Option<PluginManifest> {
                 description,
                 keywords,
                 skills,
+                agents,
                 mcp_servers,
                 apps,
                 hooks,
@@ -246,6 +250,7 @@ pub fn load_plugin_manifest(plugin_root: &Path) -> Option<PluginManifest> {
                 keywords,
                 paths: PluginManifestPaths {
                     skills: resolve_manifest_path_value(plugin_root, "skills", skills.as_ref()),
+                    agents: resolve_manifest_path_value(plugin_root, "agents", agents.as_ref()),
                     mcp_servers: resolve_manifest_path(
                         plugin_root,
                         "mcpServers",
@@ -466,6 +471,7 @@ mod tests {
     use super::MAX_DEFAULT_PROMPT_LEN;
     use super::PluginManifest;
     use super::load_plugin_manifest;
+    use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use std::fs;
     use std::path::Path;
@@ -595,6 +601,47 @@ mod tests {
         let manifest = load_manifest(&plugin_root);
 
         assert_eq!(manifest.version, Some("1.2.3-beta+7".to_string()));
+    }
+
+    #[test]
+    fn plugin_manifest_resolves_agents_path() {
+        let tmp = tempdir().expect("tempdir");
+        let plugin_root = tmp.path().join("demo-plugin");
+        fs::create_dir_all(plugin_root.join(".codex-plugin")).expect("create manifest dir");
+        fs::write(
+            plugin_root.join(".codex-plugin/plugin.json"),
+            r#"{
+  "name": "demo-plugin",
+  "agents": "./agents"
+}"#,
+        )
+        .expect("write manifest");
+
+        let manifest = load_manifest(&plugin_root);
+
+        assert_eq!(
+            manifest.paths.agents,
+            AbsolutePathBuf::try_from(plugin_root.join("agents")).ok()
+        );
+    }
+
+    #[test]
+    fn plugin_manifest_ignores_agents_path_without_relative_prefix() {
+        let tmp = tempdir().expect("tempdir");
+        let plugin_root = tmp.path().join("demo-plugin");
+        fs::create_dir_all(plugin_root.join(".codex-plugin")).expect("create manifest dir");
+        fs::write(
+            plugin_root.join(".codex-plugin/plugin.json"),
+            r#"{
+  "name": "demo-plugin",
+  "agents": "agents"
+}"#,
+        )
+        .expect("write manifest");
+
+        let manifest = load_manifest(&plugin_root);
+
+        assert_eq!(manifest.paths.agents, None);
     }
 
     #[test]
