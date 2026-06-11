@@ -1,0 +1,114 @@
+# Lean release/packaging workflow for the robobryce/codex fork.
+#
+# Produces a downloadable `codex` binary without the upstream release
+# machinery (self-hosted musl runners, zig cross-compile, bwrap digest
+# embedding, rusty_v8 overrides, cosign / macOS code-signing). Builds a
+# native x86_64-unknown-linux-gnu binary on a standard GitHub runner, packages
+# it as a tarball + SHA-256, and attaches it to a GitHub Release.
+#
+# Trigger either by pushing a tag like `fork-v0.1.0`, or manually via the
+# Actions tab ("Run workflow"), which publishes a `fork-dev-<run>` prerelease.
+name: fork-release
+
+on:
+  push:
+    tags:
+      - "fork-v*"
+  workflow_dispatch: {}
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-release:
+    name: build + publish codex binary
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: write # needed to create a GitHub Release
+    defaults:
+      run:
+        working-directory: codex-rs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            pkg-config libssl-dev
+
+      - name: Cache cargo + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            codex-rs/target
+          key: ${{ runner.os }}-fork-release-${{ hashFiles('codex-rs/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-fork-release-
+
+      - name: Build release binary
+        run: cargo build --release --bin codex
+
+      - name: Package artifact
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="x86_64-unknown-linux-gnu"
+          # Derive a version label from the tag (fork-v1.2.3 -> 1.2.3) or the run.
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#fork-v}"
+          else
+            version="dev-${GITHUB_RUN_NUMBER}"
+          fi
+          dist="dist"
+          mkdir -p "$dist"
+          bin="target/release/codex"
+          test -f "$bin" || { echo "codex binary not found at $bin"; exit 1; }
+          # Record the version Codex reports for traceability.
+          "$bin" --version || true
+          name="codex-${version}-${target}"
+          install -m 0755 "$bin" "${dist}/codex"
+          tar -C "$dist" -czf "${dist}/${name}.tar.gz" codex
+          ( cd "$dist" && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256" )
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          ls -l "$dist"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: |
+            codex-rs/dist/${{ steps.package.outputs.name }}.tar.gz
+            codex-rs/dist/${{ steps.package.outputs.name }}.tar.gz.sha256
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Tag pushes use their own tag; manual runs publish a rolling prerelease.
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('fork-dev-{0}', github.run_number) }}
+          name: codex ${{ steps.package.outputs.version }} (fork build)
+          prerelease: ${{ github.ref_type != 'tag' }}
+          fail_on_unmatched_files: true
+          files: |
+            codex-rs/dist/${{ steps.package.outputs.name }}.tar.gz
+            codex-rs/dist/${{ steps.package.outputs.name }}.tar.gz.sha256
+          body: |
+            Fork build of the `codex` CLI including the plugin-bundled agent
+            roles feature (`feat/plugin-bundled-agents`).
+
+            - Target: `x86_64-unknown-linux-gnu`
+            - Built from: `${{ github.sha }}`
+
+            Unsigned, built on a standard GitHub runner. Verify with the
+            accompanying `.sha256` file.
