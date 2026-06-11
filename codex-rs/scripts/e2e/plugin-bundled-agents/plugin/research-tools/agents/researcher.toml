@@ -1,0 +1,4 @@
+name = "plugin_researcher"
+description = "Plugin-bundled research role used to verify plugin-bundled agents end to end."
+developer_instructions = "You are a meticulous research subagent provided by a plugin."
+model = "gpt-5.2"

@@ -1,0 +1,5 @@
+{
+  "name": "research-tools",
+  "description": "E2E fixture plugin that bundles a custom agent role.",
+  "agents": "./agents"
+}
