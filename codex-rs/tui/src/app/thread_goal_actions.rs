@@ -144,6 +144,32 @@ impl App {
         mode: ThreadGoalSetMode,
     ) {
         let codex_home = app_server.codex_home_path(&self.config.codex_home);
+        let mode = if matches!(mode, ThreadGoalSetMode::ConfirmIfExists) {
+            let result = app_server.thread_goal_get(thread_id).await;
+            if self.current_displayed_thread_id() != Some(thread_id) {
+                return;
+            }
+
+            match result {
+                Ok(response) => match response.goal.as_ref() {
+                    Some(goal) if should_confirm_before_replacing_goal(goal) => {
+                        self.show_replace_thread_goal_confirmation(thread_id, draft);
+                        return;
+                    }
+                    Some(_) => ThreadGoalSetMode::ReplaceExisting,
+                    None => mode,
+                },
+                Err(err) => {
+                    self.chat_widget
+                        .add_error_message(thread_goal_error_message("read", &err));
+                    self.chat_widget.maybe_send_next_queued_input();
+                    return;
+                }
+            }
+        } else {
+            mode
+        };
+
         let result =
             goal_files::materialize_goal_draft(app_server, codex_home.as_ref(), draft).await;
         let objective = match result {
@@ -182,7 +208,13 @@ impl App {
             match result {
                 Ok(response) => match response.goal.as_ref() {
                     Some(goal) if should_confirm_before_replacing_goal(goal) => {
-                        self.show_replace_thread_goal_confirmation(thread_id, objective);
+                        self.show_replace_thread_goal_confirmation(
+                            thread_id,
+                            goal_files::GoalDraft {
+                                objective,
+                                ..Default::default()
+                            },
+                        );
                         return false;
                     }
                     Some(_) => ThreadGoalSetMode::ReplaceExisting,
@@ -318,15 +350,17 @@ impl App {
         }
     }
 
-    fn show_replace_thread_goal_confirmation(&mut self, thread_id: ThreadId, objective: String) {
-        let replace_objective = objective.clone();
+    fn show_replace_thread_goal_confirmation(
+        &mut self,
+        thread_id: ThreadId,
+        draft: goal_files::GoalDraft,
+    ) {
+        let objective = draft.objective.clone();
+        let replace_draft = draft;
         let replace_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
             tx.send(AppEvent::SetThreadGoalDraft {
                 thread_id,
-                draft: goal_files::GoalDraft {
-                    objective: replace_objective.clone(),
-                    ..Default::default()
-                },
+                draft: replace_draft.clone(),
                 mode: ThreadGoalSetMode::ReplaceExisting,
             });
         })];
