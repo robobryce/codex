@@ -68,8 +68,32 @@ jobs:
       - name: cargo clippy (touched crates)
         run: cargo clippy -p codex-plugin -p codex-core-plugins -p codex-core --all-targets
 
-      - name: cargo test (touched crates)
-        run: cargo test -p codex-plugin -p codex-core-plugins -p codex-core --lib
+      # Gating signal: the plugin-bundled-agents tests are deterministic and
+      # must always pass.
+      - name: cargo test (plugin-bundled-agents)
+        env:
+          RUST_MIN_STACK: "8388608"
+        run: |
+          cargo test -p codex-plugin --lib effective_plugin_agent_roots
+          cargo test -p codex-core-plugins --lib plugin_agent_roots
+          cargo test -p codex-core-plugins --lib agents_path
+          cargo test -p codex-core-plugins --lib resolves_agents_path
+          cargo test -p codex-core --lib plugin_agent_role_tests
+          cargo test -p codex-core --lib plugin_bundled_agent_role
+
+      # Broader coverage over the touched crates. A couple of upstream tests are
+      # timing/signal-flaky on shared runners (e.g. SIGTERM cleanup), so retry
+      # via nextest rather than letting a flake fail the run.
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: cargo nextest (touched crates, with retries)
+        env:
+          RUST_MIN_STACK: "8388608"
+        run: |
+          cargo nextest run --retries 2 --no-fail-fast \
+            -p codex-plugin -p codex-core-plugins -p codex-core
 
   # Smoke-build the release binary so a broken release build is caught on PRs,
   # not only when a tag is pushed.
