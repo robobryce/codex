@@ -131,7 +131,10 @@ pub(crate) async fn materialize_goal_draft(
         write_goal_file(store, path.clone(), text.as_bytes().to_vec()).await?;
 
         if !placeholder.is_empty() {
-            replacements.push((placeholder.clone(), format!("pasted text file: {path}")));
+            replacements.push((
+                placeholder.clone(),
+                format!("pasted text file: {path}. Read this file before continuing."),
+            ));
         }
     }
 
