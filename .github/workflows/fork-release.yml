@@ -76,9 +76,12 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             codex-rs/target
-          key: ${{ runner.os }}-fork-release-${{ hashFiles('codex-rs/Cargo.lock') }}
+          # Key on the runner image, not just runner.os ("Linux" for every
+          # Ubuntu): a target/ cache built on 24.04 is ABI-incompatible on
+          # 22.04 and produces "can't find crate" errors for cached rlibs.
+          key: ${{ runner.os }}-ubuntu2204-fork-release-${{ hashFiles('codex-rs/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-fork-release-
+            ${{ runner.os }}-ubuntu2204-fork-release-
 
       - name: Build release binary
         run: cargo build --release --bin codex
