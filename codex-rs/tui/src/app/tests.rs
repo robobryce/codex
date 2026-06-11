@@ -4221,6 +4221,109 @@ async fn set_thread_goal_objective_materializes_long_objective_before_goal_set()
     Ok(())
 }
 
+#[tokio::test]
+async fn set_thread_goal_objective_confirms_replacement_before_materializing() -> Result<()> {
+    let mut app = make_test_app().await;
+    let mut app_server = crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref())
+        .await
+        .expect("embedded app server");
+    let started = app_server
+        .start_thread(app.chat_widget.config_ref())
+        .await
+        .expect("thread/start should succeed");
+    let thread_id = started.session.thread_id;
+    app.enqueue_primary_thread_session(started.session, started.turns)
+        .await
+        .expect("primary thread should be registered");
+    app_server
+        .thread_goal_set(
+            thread_id,
+            Some("keep this goal".to_string()),
+            Some(codex_app_server_protocol::ThreadGoalStatus::Active),
+            /*token_budget*/ None,
+        )
+        .await?;
+    let attachments_dir = app.chat_widget.config_ref().codex_home.join("attachments");
+
+    let accepted = app
+        .set_thread_goal_objective(
+            &mut app_server,
+            thread_id,
+            "x".repeat(MAX_THREAD_GOAL_OBJECTIVE_CHARS + 1),
+            crate::app_event::ThreadGoalSetMode::ConfirmIfExists,
+        )
+        .await;
+
+    assert!(!accepted);
+    assert!(!attachments_dir.exists());
+    assert_eq!(
+        app_server
+            .thread_goal_get(thread_id)
+            .await?
+            .goal
+            .expect("goal should still be set")
+            .objective,
+        "keep this goal"
+    );
+    app_server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_thread_goal_draft_confirms_replacement_before_materializing_paste() -> Result<()> {
+    let mut app = make_test_app().await;
+    let mut app_server = crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref())
+        .await
+        .expect("embedded app server");
+    let started = app_server
+        .start_thread(app.chat_widget.config_ref())
+        .await
+        .expect("thread/start should succeed");
+    let thread_id = started.session.thread_id;
+    app.enqueue_primary_thread_session(started.session, started.turns)
+        .await
+        .expect("primary thread should be registered");
+    app_server
+        .thread_goal_set(
+            thread_id,
+            Some("keep this goal".to_string()),
+            Some(codex_app_server_protocol::ThreadGoalStatus::Active),
+            /*token_budget*/ None,
+        )
+        .await?;
+    let placeholder = "[Pasted Content 5 chars]";
+    let objective = format!("Use {placeholder}");
+    let attachments_dir = app.chat_widget.config_ref().codex_home.join("attachments");
+
+    app.set_thread_goal_draft(
+        &mut app_server,
+        thread_id,
+        crate::goal_files::GoalDraft {
+            objective,
+            text_elements: vec![TextElement::new(
+                (4..4 + placeholder.len()).into(),
+                Some(placeholder.to_string()),
+            )],
+            pending_pastes: vec![(placeholder.to_string(), "hello".to_string())],
+        },
+        crate::app_event::ThreadGoalSetMode::ConfirmIfExists,
+    )
+    .await;
+
+    assert!(!attachments_dir.exists());
+    assert_eq!(
+        app_server
+            .thread_goal_get(thread_id)
+            .await?
+            .goal
+            .expect("goal should still be set")
+            .objective,
+        "keep this goal"
+    );
+    app_server.shutdown().await?;
+    Ok(())
+}
+
 fn test_thread_session(thread_id: ThreadId, cwd: PathBuf) -> ThreadSessionState {
     ThreadSessionState {
         thread_id,
