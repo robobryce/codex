@@ -408,14 +408,15 @@ async fn total_byte_limit_truncates_later_project_docs() {
 #[tokio::test]
 async fn read_agents_md_propagates_metadata_errors() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let mut config = make_config(&tmp, /*limit*/ 4096, /*instructions*/ None).await;
+    let config = make_config(&tmp, /*limit*/ 4096, /*instructions*/ None).await;
     let marker_path = config.cwd.join(".git");
     let fs = FailingFileSystem {
         path: marker_path,
         failure: InjectedFailure::Metadata(io::ErrorKind::PermissionDenied),
     };
+    let mut warnings = Vec::new();
 
-    let err = read_agents_md(&mut config.config, &fs)
+    let err = read_agents_md(&config.config, &fs, &mut warnings)
         .await
         .expect_err("metadata error");
 
@@ -426,13 +427,14 @@ async fn read_agents_md_propagates_metadata_errors() {
 async fn read_agents_md_propagates_read_errors() {
     let tmp = tempfile::tempdir().expect("tempdir");
     fs::write(tmp.path().join("AGENTS.md"), "project doc").unwrap();
-    let mut config = make_config(&tmp, /*limit*/ 4096, /*instructions*/ None).await;
+    let config = make_config(&tmp, /*limit*/ 4096, /*instructions*/ None).await;
     let fs = FailingFileSystem {
         path: config.cwd.join("AGENTS.md"),
         failure: InjectedFailure::Read(io::ErrorKind::PermissionDenied),
     };
+    let mut warnings = Vec::new();
 
-    let err = read_agents_md(&mut config.config, &fs)
+    let err = read_agents_md(&config.config, &fs, &mut warnings)
         .await
         .expect_err("read error");
 
@@ -443,13 +445,14 @@ async fn read_agents_md_propagates_read_errors() {
 async fn read_agents_md_ignores_files_removed_after_discovery() {
     let tmp = tempfile::tempdir().expect("tempdir");
     fs::write(tmp.path().join("AGENTS.md"), "project doc").unwrap();
-    let mut config = make_config(&tmp, /*limit*/ 4096, /*instructions*/ None).await;
+    let config = make_config(&tmp, /*limit*/ 4096, /*instructions*/ None).await;
     let fs = FailingFileSystem {
         path: config.cwd.join("AGENTS.md"),
         failure: InjectedFailure::Read(io::ErrorKind::NotFound),
     };
+    let mut warnings = Vec::new();
 
-    let loaded = read_agents_md(&mut config.config, &fs)
+    let loaded = read_agents_md(&config.config, &fs, &mut warnings)
         .await
         .expect("removed file is recoverable");
 

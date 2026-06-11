@@ -560,7 +560,7 @@ async fn global_loading_warning_surfaces_during_thread_creation() -> Result<()> 
     let mut builder = test_codex().with_home(home);
     let test = builder.build(&server).await?;
     let warning = wait_for_event_match(&test.codex, |event| match event {
-        EventMsg::ConfigWarning(warning)
+        EventMsg::ThreadStartupWarning(warning)
             if warning
                 .message
                 .contains(source.as_path().display().to_string().as_str()) =>
